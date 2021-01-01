@@ -2,10 +2,18 @@ rem Exploring the VM image and what is available
 
 rem DEBUG search for Visual Studio and C compiler, when the windows image does change and paths breaks
 path
-dir /W "C:\tools"
+dir /W C:\
 dir /W "C:\Program Files (x86)"
+dir /W "C:\Program Files (x86)\Microsoft Visual Studio"
+dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019"
+dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community"
+dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools"
+dir /W "C:\Program Files (x86)\MSBuild"
 dir /W "C:\Program Files"
 dir /W "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
+dir /W "C:\ProgramData\chocolatey\lib"
+dir /W "C:\ProgramData\chocolatey\lib\mingw"
+dir /W "C:\ProgramData\chocolatey\lib\mingw\tools"
 dir "C:\Program Files (x86)\Microsoft Visual Studio\*vcvars64.bat" /s /b
 dir "C:\Program Files (x86)\Microsoft Visual Studio\*vcvarsall.bat" /s /b
 
@@ -24,12 +32,12 @@ mkdir build
 cd build
 @rem cmake --help
 cmake --config Release ..
-if %ERRORLEVEL% NEQ 0 exit /b 0 
+if %ERRORLEVEL% NEQ 0 exit /b 1
 
 dir /W
 echo "Starting build by running msbuild.exe"
 msbuild sjasmplus.vcxproj /property:Configuration=Release
-if %ERRORLEVEL% NEQ 0 exit /b 0 
+if %ERRORLEVEL% NEQ 0 exit /b 1
 echo "installing to c:\tools\sjasmplus"
 @echo on
 mkdir c:\tools\sjasmplus
