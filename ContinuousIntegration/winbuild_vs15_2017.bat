@@ -1,10 +1,19 @@
 rem Exploring the VM image and what is available
+
+rem DEBUG search for Visual Studio and C compiler, when the windows image does change and paths breaks
 path
-rem Search for vcvars64.bat and call it, before cmake script is run (it needs vars already set)
-C:\tools\msys64\usr\bin\find "C:/Program Files (x86)/Microsoft Visual Studio" -iname vcvars64.bat -type f
-C:\tools\msys64\usr\bin\find "C:/Program Files (x86)/Microsoft Visual Studio" -iname msbuild.exe -type f
-for /F "delims=" %%I in ('dir "%ProgramFiles(x86)%\*vcvars64.bat" /S /B') do echo "%%I"
-for /F "delims=" %%I in ('dir "%ProgramFiles(x86)%\*vcvars64.bat" /S /B') do call "%%I"
+dir /W "C:\tools"
+dir /W "C:\Program Files (x86)"
+dir /W "C:\Program Files"
+dir /W "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
+dir "C:\Program Files (x86)\Microsoft Visual Studio\*vcvars64.bat" /s /b
+dir "C:\Program Files (x86)\Microsoft Visual Studio\*vcvarsall.bat" /s /b
+
+rem no msys?! C:\tools\msys64\usr\bin\find "C:/Program Files (x86)/Microsoft Visual Studio" -iname vcvars64.bat -type f
+rem no msys?! C:\tools\msys64\usr\bin\find "C:/Program Files (x86)/Microsoft Visual Studio" -iname msbuild.exe -type f
+rem "Command not found"?! for /f "delims=" %%I in ('dir "%ProgramFiles(x86)%\*vcvars64.bat" /s /b') do call "%%I"
+
+rem Setup MSCC (VSC) by calling the vcvars batch file
 rem call "C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 path
 
@@ -15,9 +24,12 @@ mkdir build
 cd build
 @rem cmake --help
 cmake --config Release ..
+if %ERRORLEVEL% NEQ 0 exit /b 0 
+
 dir /W
 echo "Starting build by running msbuild.exe"
 msbuild sjasmplus.vcxproj /property:Configuration=Release
+if %ERRORLEVEL% NEQ 0 exit /b 0 
 echo "installing to c:\tools\sjasmplus"
 @echo on
 mkdir c:\tools\sjasmplus
