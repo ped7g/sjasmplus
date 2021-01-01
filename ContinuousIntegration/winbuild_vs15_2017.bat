@@ -5,15 +5,17 @@ path
 dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019"
 dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools"
 dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild"
-dir "C:\Program Files (x86)\Microsoft Visual Studio\2019\*.bat" /s /b 
-dir "C:\Program Files (x86)\Microsoft Visual Studio\2019\*.exe" /s /b 
+dir "C:\Program Files (x86)\Microsoft Visual Studio\2019\*.bat" /s /b
+dir "C:\Program Files (x86)\Microsoft Visual Studio\2019\*.exe" /s /b
 dir /W "C:\Program Files (x86)\MSBuild\15.0"
-dir "C:\Program Files (x86)\MSBuild\15.0\*.bat" /s /b 
-dir "C:\Program Files (x86)\MSBuild\15.0\*.exe" /s /b 
+dir "C:\Program Files (x86)\MSBuild\15.0\*.bat" /s /b
+dir "C:\Program Files (x86)\MSBuild\15.0\*.exe" /s /b
 dir /W "C:\Program Files"
 dir /W "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
 dir /W "C:\ProgramData\chocolatey\lib"
-dir /W "C:\ProgramData\chocolatey\lib\mingw\tools\install"
+dir "C:\ProgramData\chocolatey\lib\*.bat" /s /b
+dir "C:\ProgramData\chocolatey\lib\*.exe" /s /b
+
 dir "C:\Program Files (x86)\Microsoft Visual Studio\*vcvars64.bat" /s /b
 dir "C:\Program Files (x86)\Microsoft Visual Studio\*vcvarsall.bat" /s /b
 
