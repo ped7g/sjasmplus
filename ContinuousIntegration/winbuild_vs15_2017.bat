@@ -1,5 +1,12 @@
 rem Exploring the VM image and what is available
 path
+rem Search for vcvars64.bat and call it, before cmake script is run (it needs vars already set)
+C:\tools\msys64\usr\bin\find "C:/Program Files (x86)/Microsoft Visual Studio" -iname vcvars64.bat -type f
+C:\tools\msys64\usr\bin\find "C:/Program Files (x86)/Microsoft Visual Studio" -iname msbuild.exe -type f
+for /F "delims=" %%I in ('dir "%ProgramFiles(x86)%\*vcvars64.bat" /S /B') do echo "%%I"
+for /F "delims=" %%I in ('dir "%ProgramFiles(x86)%\*vcvars64.bat" /S /B') do call "%%I"
+rem call "C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+path
 
 rem CMAKE windows build with MS compiler
 del Makefile
@@ -9,10 +16,6 @@ cd build
 @rem cmake --help
 cmake --config Release ..
 dir /W
-@rem C:\tools\msys64\usr\bin\find "C:/Program Files (x86)/Microsoft Visual Studio" -iname vcvars64.bat -type f
-@rem C:\tools\msys64\usr\bin\find "C:/Program Files (x86)/Microsoft Visual Studio" -iname msbuild.exe -type f
-call "C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-path
 echo "Starting build by running msbuild.exe"
 msbuild sjasmplus.vcxproj /property:Configuration=Release
 echo "installing to c:\tools\sjasmplus"
