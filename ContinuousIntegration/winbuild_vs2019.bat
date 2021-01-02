@@ -5,12 +5,12 @@ rem STATUS: no MSC compiler installed in the image? Seems I need to install it m
 
 rem DEBUG search for Visual Studio and C compiler, when the windows image does change and paths breaks
 path
+choco list --local-only
+
 dir /W "C:\Program Files"
 dir /W "C:\Program Files (x86)"
+dir /W "C:\ProgramData\chocolatey"
 
-dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019"
-dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools"
-dir /W "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild"
 dir "C:\Program Files (x86)\Microsoft Visual Studio\2019\*.bat" /s /b
 dir "C:\Program Files (x86)\Microsoft Visual Studio\2019\*.exe" /s /b
 dir "C:\ProgramData\chocolatey\bin\*.bat" /s /b
