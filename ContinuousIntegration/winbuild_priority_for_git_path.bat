@@ -1,8 +1,7 @@
-rem Borrow bash and other tools from MSYS2 (and put them ahead of other MS crap)
-rem set PATH=C:\tools\msys64\usr\bin\;%PATH%;c:\tools\sjasmplus
-
-rem set bash, find and other tools from git directory to have priority over MS crap and add sjasmplus to path
+rem Set GIT directory as priority (over MS crap) path to borrow GNU: bash, find, diff, cmp
+rem and add sjasmplus to the path
 set PATH=C:\Program Files\Git\usr\bin\;%PATH%;c:\tools\sjasmplus
+
 rem test availability and version of all required tooling
 where bash
 bash --version
