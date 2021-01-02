@@ -1,4 +1,4 @@
-choco install -y --no-progress diffutils findutils
+rem choco install -y --no-progress diffutils findutils
 @call ContinuousIntegration\winbuild_set_msys2_path.bat
 rem MinGW build
 mingw32-make -f Makefile.win clean
