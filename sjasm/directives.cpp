@@ -1728,12 +1728,17 @@ static void dirMACRO() {
 		Error("[MACRO] No macro definitions allowed here", NULL, SUPPRESS);
 		return;
 	}
-	char* lpLabel = LastParsedLabel;	// modifiable copy of global buffer pointer
-	// get+validate macro name either from label on same line or from following line
-	char* n = GetID(LastParsedLabelLine == CompiledCurrentLine ? lpLabel : lp);
-	if (n) MacroTable.Add(n, lp);
-	else {
-		Error("[MACRO] Illegal macroname");
+	// check if the name of macro is defined at beginning of the line ("label" name)
+	const bool labelName = LastParsedLabelLine == CompiledCurrentLine;
+	assert(!labelName || LastParsedLabel);
+	char* lpLabel = labelName ? LastParsedLabel : lp;	// temporary pointer to advance by GetID
+	char* n = GetID(lpLabel);							// get+validate macro name
+	if (*lpLabel && !White(*lpLabel)) n = nullptr;		// if there's unexpected trailing char, report illegal name
+	if (n) {
+		if (!labelName) lp = lpLabel;					// name was after MACRO keyword, advance global `lp` (to parse arguments)
+		MacroTable.Add(n, lp);
+	} else {
+		Error("[MACRO] Illegal macroname", labelName ? LastParsedLabel : lp);	// report what was fed into GetID
 		SkipToEol(lp);
 	}
 }
@@ -1866,6 +1871,7 @@ static void DupWhileImplementation(bool isWhile) {
 		}
 	}
 
+	const char* indexVar = nullptr;
 	if (isWhile) {
 		condition = new CStringsList(lp);
 		if (nullptr == condition) ErrorOOM();
@@ -1904,10 +1910,17 @@ static void DupWhileImplementation(bool isWhile) {
 		if ((int) val < 0) {
 			ErrorInt("[DUP/REPT] Repeat value must be positive or zero", val, IF_FIRST); return;
 		}
+		if (comma(lp)) {
+			indexVar = GetID(lp);
+			if (nullptr == indexVar) {
+				Error("[DUP/REPT] invalid index variable name", lp, IF_FIRST);
+				SkipToEol(lp);
+			}
+		}
 	}
 
-	RepeatStack.emplace(val, condition, new CStringsList(lp));
-	if (!SkipBlanks()) Error("[DUP] unexpected chars", lp, FATAL);	// Ped7g: should have been empty!
+	RepeatStack.emplace(val, condition, new CStringsList(indexVar ? indexVar : ""));
+	if (!SkipBlanks()) Error("[DUP] unexpected chars", lp, SUPPRESS);
 }
 
 static void dirDUP() {
@@ -1969,10 +1982,17 @@ static void dirEDUP() {
 	++lijst;
 	assert(!sourcePosStack.empty());
 	const TextFilePos oSourcePos = sourcePosStack.back();
-	while (shouldRepeat(dup)) {
+	aint currentRepeatIndex = 0;
+	while (IsRunning && dup.Lines && shouldRepeat(dup)) {
 		sourcePosStack.back() = dup.sourcePos;
-		donotlist=1;	// skip first empty line (where DUP itself is parsed)
 		lijstp = dup.Lines;
+		assert(lijstp);
+		if (*lijstp->string) {
+			// if the DUP has index variable, the first "line" is the variable name, set it up to current index
+			std::unique_ptr<char[]> indexVar(ValidateLabel(lijstp->string,  false));
+			if (indexVar.get()) LabelTable.Insert(indexVar.get(), currentRepeatIndex++, LABEL_IS_DEFL);
+		}
+		lijstp = lijstp->next;	// skip first empty line / indexVar name
 		while (IsRunning && lijstp && lijstp->string) {	// the EDUP/REPT/ENDM line has string=NULL => ends loop
 			if (lijstp->source.line) sourcePosStack.back() = lijstp->source;
 			STRCPY(line, LINEMAX, lijstp->string);
