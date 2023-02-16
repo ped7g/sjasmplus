@@ -37,7 +37,7 @@ static void PrintHelpMain() {
 	// Please keep help lines at most 79 characters long (cursor at column 88 after last char)
 	//     |<-- ...8901234567890123456789012345678901234567890123456789012... 80 chars -->|
 	_COUT "Based on code of SjASM by Sjoerd Mastijn (http://www.xl2s.tk)" _ENDL;
-	_COUT "Copyright 2004-2022 by Aprisobal and all other participants" _ENDL;
+	_COUT "Copyright 2004-2023 by Aprisobal and all other participants" _ENDL;
 	//_COUT "Patches by Antipod / boo_boo / PulkoMandy and others" _ENDL;
 	//_COUT "Tidy up by Tygrys / UB880D / Cizo / mborik / z00m" _ENDL;
 	_COUT "\nUsage:\nsjasmplus [options] sourcefile(s)" _ENDL;
@@ -631,11 +631,7 @@ int main(int argc, char* argv[]) {
 #else
 int main(int argc, char **argv) {
 #endif
-	// existence of NO_COLOR env.var. disables auto-colors: http://no-color.org/
-	const char* envNoColor = std::getenv("NO_COLOR");
-	// try to auto-detect ANSI-colour support (true if env.var. TERM exist and contains "color" substring)
-	const char* envTerm = std::getenv("TERM");
-	Options::SetTerminalColors(!envNoColor && envTerm && strstr(envTerm, "color"));
+	Options::SetTerminalColors(autoColorsDetection());
 
 	const char* logo = "SjASMPlus Z80 Cross-Assembler v" VERSION " (https://github.com/z00m128/sjasmplus)";
 
