@@ -54,7 +54,8 @@ MEMCHECK?=valgrind --leak-check=yes
 EXE_BASE_NAME=sjasmplus
 BUILD_DIR=build
 
-LUA_VER=5.4
+LUA_VER?=5.4
+LUA_LIBNAME?=lua$(LUA_VER)
 
 SUBDIR_BASE=sjasm
 SUBDIR_LUA=lua$(LUA_VER)
@@ -63,31 +64,23 @@ SUBDIR_CRC32C=crc32c
 SUBDIR_DOCS=docs
 SUBDIR_COV=coverage
 
-INCDIR_LUA=/usr/include/lua$(LUA_VER)
+INCDIR_LUA?=/usr/include/lua$(LUA_VER)
 
 ifeq ($(USE_LUA), 1)
-_LUA_CPPFLAGS=-I$(SUBDIR_LUA)
-endif
-
+LDFLAGS+=-ldl
 ifeq ($(USE_BUNDLED_LUA), 0)
 _LUA_CPPFLAGS=-I$(INCDIR_LUA)
+LDFLAGS+=-l$(LUA_LIBNAME)
+else
+_LUA_CPPFLAGS=-I$(SUBDIR_LUA)
+endif
+CPPFLAGS+=-DUSE_LUA -DLUA_USE_LINUX $(_LUA_CPPFLAGS) -I$(SUBDIR_LUABRIDGE)
 endif
 
 # TODO too many lua5.4 warnings: -pedantic removed
 CPPFLAGS+=-Wall -DMAX_PATH=PATH_MAX -I$(SUBDIR_CRC32C)
-ifeq ($(USE_LUA), 1)
-CPPFLAGS+=-DUSE_LUA -DLUA_USE_LINUX $(_LUA_CPPFLAGS) -I$(SUBDIR_LUABRIDGE)
-endif
 
 CFLAGS+=$(CFLAGS_EXTRA)
-
-ifeq ($(USE_LUA), 1)
-LDFLAGS+=-ldl
-endif
-
-ifeq ($(USE_BUNDLED_LUA), 0)
-LDFLAGS+=-llua$(LUA_VER)
-endif
 
 ifdef DEBUG
 BUILD_DIR:=$(BUILD_DIR)/debug
@@ -146,14 +139,10 @@ TESTSSRCS:=$(wildcard $(SUBDIR_TESTS)/*.cpp)
 TESTSOBJS:=$(call object_files_ut,$(TESTSSRCS))
 
 ALL_OBJS:=$(OBJS) $(CRC32COBJS)
-ifeq ($(USE_LUA), 1)
-ifeq ($(USE_BUNDLED_LUA), 1)
-ALL_OBJS+=$(LUAOBJS)
-endif
-endif
 ALL_OBJS_UT=$(OBJS_UT) $(CRC32COBJS_UT) $(UTPPOBJS) $(TESTSOBJS)
 ifeq ($(USE_LUA), 1)
 ifeq ($(USE_BUNDLED_LUA), 1)
+ALL_OBJS+=$(LUAOBJS)
 ALL_OBJS_UT+=$(LUAOBJS_UT)
 endif
 endif
