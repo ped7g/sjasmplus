@@ -14,7 +14,7 @@ ignoreAsmFiles=()
 if [[ -s ContinuousIntegration/examples_ignore.txt ]]; then
     OLD_IFS=$IFS
     IFS=$'\n'           # input/internal field separator
-    while read line; do
+    while read -r line; do
         [[ -z "$line" ]] && continue            # skip empty lines
         [[ "#" == ${line::1} ]] && continue     # skip comments
         lineLen=${#line}
@@ -23,7 +23,7 @@ if [[ -s ContinuousIntegration/examples_ignore.txt ]]; then
     done < ContinuousIntegration/examples_ignore.txt
     IFS=$OLD_IFS
 fi
-echo -e "Files to ignore: \033[93m${ignoreAsmFiles[@]}\033[0m"
+echo -e "Files to ignore: \033[93m${ignoreAsmFiles[*]}\033[0m"
 
 echo -n -e "Project dir \"\033[96m${PROJECT_DIR}\033[0m\". "
 
@@ -70,15 +70,15 @@ for f in "${EXAMPLE_FILES[@]}"; do
     [[ 'IGNORE' == $f ]] && continue
     ## standalone .asm file was found, try to build it
     totalAsmFiles=$((totalAsmFiles + 1))
-    dirpath=`dirname "$f"`
-    asmname=`basename "$f"`
+    dirpath=$(dirname "$f")
+    asmname=$(basename "$f")
     mainname="${f%.asm}"
     # see if there are extra options defined
     optionsF="${mainname}.options"
     options=()
-    [[ -s "$optionsF" ]] && options=(`cat "${optionsF}"`)
+    [[ -s "$optionsF" ]] && options=($(cat "${optionsF}"))
     ## built it with sjasmplus (remember exit code)
-    echo -e "\033[95mAssembling\033[0m \"\033[96m${asmname}\033[0m\" in \"\033[96m${dirpath##$PROJECT_DIR/}\033[0m\", options [\033[96m${options[@]}\033[0m]"
+    echo -e "\033[95mAssembling\033[0m \"\033[96m${asmname}\033[0m\" in \"\033[96m${dirpath##$PROJECT_DIR/}\033[0m\", options [\033[96m${options[*]}\033[0m]"
     $MEMCHECK "$EXE" --nologo --msg=war --fullpath --inc="${dirpath}" "${options[@]}" "$f"
     last_result=$?
     ## report assembling exit code problem

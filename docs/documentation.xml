@@ -2,7 +2,7 @@
 <!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
 "http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
 <book id="sjasmplus_manual">
-  <title>SjASMPlus 1.20.2 Documentation [2023-02-14]</title>
+  <title>SjASMPlus 1.21.0 Documentation [2025-03-15]</title>
 
   <chapter id="introduction">
     <title>Introduction</title>
@@ -111,11 +111,13 @@
 
       <para>Special thanks to <emphasis>Sjoerd Mastijn</emphasis>, the author of SjASM.</para>
 
-      <para><emphasis>Aprisobal </emphasis>- main programming, documentation, etc.</para>
+      <para>Special thanks to <emphasis>Aprisobal</emphasis>, the author of early versions of sjasmplus.</para>
+
+      <para><emphasis>Peter Helcmanovsky </emphasis>(Ped7g) - programming and maintenance since v1.11.0.</para>
 
       <para>Thanks to:<itemizedlist>
           <listitem>
-            <para><emphasis>Kurles/HS/CPU, Alexander Kovalenko, Ped7g, Dart Alver, Oli Wilkinson</emphasis> - additional
+            <para><emphasis>Kurles/HS/CPU, Alexander Kovalenko, Dart Alver, Oli Wilkinson, Laurent Carlier</emphasis> - additional
             programming;</para>
           </listitem>
 
@@ -203,11 +205,54 @@
 
       <para><variablelist>
 
+          <varlistentry>
+            <term>?.?.? - 1.21.1</term>
+            <listitem>
+              <synopsis>
+- <link linkend="po_bplist">`BPLIST`</link> supports now also MAME
+- <link linkend="nex_close">`SAVENEX CLOSE`</link> can append multiple files
+- Lua: minor extensions and modifications to API
+- macros now handle large amount of macros defined better (like 64ki of macros)
+- fix local labels inside macros in modules
+              </synopsis>
+            </listitem>
+          </varlistentry>
+
 <varlistentry>
-            <term>WIP - 1.20.3</term>
+            <term>15.3.2025 - 1.21.0</term>
+
+            <listitem>
+              <synopsis>
+- C++17 standard is now required minimum (to compile sjasmplus sources) (GCC9 for example)
+- <link linkend="po_incbin">`INCBIN`</link>, <link linkend="po_inchob">`INCHOB`</link> and <link linkend="po_inctrd">`INCTRD`</link> support now include paths priority (angle &lt;filename&gt; vs "filename")
+- also <link linkend="po_incbin">`SAVENEX`</link> will respect include paths for source files (BMP, append)
+- include paths which can't be opened before assembling are now reported in error message
+- include paths which start with literal tilde '~' are reported in error message
+- include options <link linkend="s_cli">`-i, -I, --inc`</link> can take path from next CLI argument (new recommended syntax)
+- option <link linkend="s_cli">`--fullpath`</link> has now three states including full absolute paths
+- added Amstrad CPC device <link linkend="po_device">AMSTRADCPCPLUS</link> - by Laurent Carlier
+- added Amstrad CPC+ <link linkend="po_savecpr">`SAVECPR`</link> to save CPR cartridge - by Laurent Carlier
+- ZX Next CSpect emulator v2.19.9.1: `break` opcode changed to `FD 00`
+- ZX Next CSpect emulator v3.0.1.5b: new opcodes `setbrk` and `clrbrk`
+- fix: windows cmd.exe console state after running sjasmplus.exe
+- Lua: fix <link linkend="lua_sj_insert_label">sj.insert_label</link> to apply current namespace to name
+- Lua: new <link linkend="lua_sj_get_modules">sj.get_modules</link> to get current modules namespace
+- Lua: minor version upgrade to 5.4.7 (from 5.4.6)
+- Lua: bundled Lua is now built and linked as C++ code (fixes memory leaks in edge cases)
+- minor bugfixes in specific edge cases
+- refactored lot of code related to file names and manipulation (to use C++17 filesystem library)
+</synopsis>
+            </listitem>
+          </varlistentry>
+
+<varlistentry>
+            <term>23.6.2023 - 1.20.3</term>
 
             <listitem>
               <synopsis>- added alias <link linkend="s_cli">`--define`</link> for `-D`
+- added <link linkend="s_strings">string-literals</link> suffixes Z and C to add zero or set high bit of last char
+- end of line backslash continues source line (<ulink url="https://github.com/z00m128/sjasmplus/blob/master/tests/parsing/escape_eol.asm">limited support</ulink>, not recommended)
+- Lua: minor version upgrade to 5.4.6 (from 5.4.4)
 - minor updates to Makefile
 </synopsis>
             </listitem>
@@ -448,13 +493,13 @@
       <para><synopsis>  -h or --help[=warnings]  Help information
   --version                Basic info (with --nologo only raw version string)
   --zxnext[=cspect]        Enable ZX Next Z80 extensions (CSpect emulator has
-  extra "exit" DD00 and "break" DD01 fake instructions)
+  extra "exit", "break", "clrbrk" and "setbrk" fake instructions)
   --i8080                  Limit valid instructions to i8080 only (+ no fakes)
   --lr35902                Sharp LR35902/SM83 CPU instructions mode (+ no fakes)
   --outprefix=&lt;path&gt;       Prefix for save/output/.. filenames in directives
   Note: if prefix is folder, it must already exist and add trailing slash. Prefix
         is applied only to filenames defined in source (not to CLI arguments).
-  -i&lt;path&gt; or -I&lt;path&gt; or --inc=&lt;path&gt; ( --inc without "=" to empty the list)
+  -i &lt;path&gt; or -I &lt;path&gt; or --inc= &lt;path&gt; (--inc only to empty the list)
                            Include path (later defined have higher priority)
   --lst[=&lt;filename&gt;]       Save listing to &lt;filename&gt; (&lt;source&gt;.lst is default)
   --lstlab[=sort]          Append [sorted] symbol table to listing
@@ -470,9 +515,8 @@
   Note: "lst" or "lstlab" will turn STDERR into listing file (this will clash with
   `--lst`, use only one of the options) and some diagnostic messages of "all"
   are omitted, as they are not part of listing files. "lstlab" does sort symbols.
-  --fullpath               Show full path to file in errors
-  Note: the "fullpath" starts from current working directory, not from file system
-		root (the MS_VS build was fixed to behave this way since v1.15.0)
+  --fullpath[=on|rel|off]  Input file paths: full | CWD relative | name only (*)
+  Note: --fullpath without value is "rel" (relative to current working directory)
   --color=[on|off|auto]    Enable or disable ANSI coloring of warnings/errors
   Note: auto detection checks for existence of environment variable TERM, and its
 		content is scanned for sub-string "color" (like "xterm-256color")
@@ -492,6 +536,13 @@
 	  The option <code>--lstlab=sort</code> will cause also other symbol dumps being sorted (along
 	  listing): <code>--sym</code>, <code>CSPECTMAP</code> and <code>LABELSLIST</code>.
 	  The <code>--msg=lstlab</code> sets always sorting "on" (no "unsorted" option).
+  </para>
+  <para>
+	  (since v1.21.0) Include path options <code>-i, -I, --inc=</code> now accept path after space, ie.
+      <code>-I some/path/</code> - this is new and recommended syntax. If you get error "error: include
+      path starts with ~ (check docs)", it means your shell did not substitute the ~ character with
+      $HOME path, probably because you didn't put space between option and ~, so shell considers it
+      to be single string not beginning with ~. Insert space between, like: <code>-I ~/include/path</code>
   </para>
   <para>Value for <code>--syntax</code> option may consist of multiple letters, omitting letter
 	for particular feature will use the default setting:
@@ -538,7 +589,7 @@ label:  dw 15
 sjasmplus --lst --lstlab example.asm</programlisting>
 	will execute the assembling as if command line "<code>sjasmplus --zxnext=cspect --msg=war --lst --lstlab example.asm</code>"
 	was used. Known issue: parser of environment variable delimits each option on any white-space character, so
-	option containing space character will be incorrectly parsed (like "-Ifile-path with space" = fails and
+	option containing space character will be incorrectly parsed (like "-I file-path with space" = fails and
 	there is no way to escape/quote the path in the SJASMPLUSOPTS variable to make it work).
   </para>
     </section>
@@ -597,8 +648,9 @@ file.asm(1): warning[rdlow]: Reading memory at low address: 8</programlisting>
 		<para>
 		  Lines in the source file should have the following form:
 		  <programlisting>Label Operator Operand Comment</programlisting>
+		  <emphasis role="strong">Lines without label must start with whitespace.</emphasis>
 		  All fields are optional.
-		  <emphasis role="strong">Lines without label should start with whitespace.</emphasis>
+		  End of line backslash continues source line (since 1.20.3, <ulink url="https://github.com/z00m128/sjasmplus/blob/master/tests/parsing/escape_eol.asm">limited support</ulink>, not recommended).
 		  Operators and operands can be inlined with colon:
 		  <programlisting>      Operator Operand:Operator Operand:Operator Operand... Comment</programlisting>
 		  Comments should start with '<code>;</code>' or '<code>//</code>'.
@@ -682,8 +734,7 @@ invalid2+*: cpl : ld a,14       ; only first instruction after label is consider
       <para>When there is a <link linkend="po_module">module definition</link> all
       labels (except those starting with a '@') are local to that module. To
       use a label from outside the module use modulename.labelname, in this
-      example: 'vdp.Cls'. Labels starting with a '.' are also local to the
-      previous non-local label.</para>
+      example: 'vdp.Cls'. Labels starting with a '.' are local to the previous non-local label.</para>
 
       <para>(since v1.18.0) If you start the label with an ! (exclamation mark), it will not
       affect following local labels (same syntax as <ulink url="http://www.xl2s.tk/">sjasm</ulink>).</para>
@@ -705,7 +756,7 @@ Main:                       ; main.Main
 
         MODULE vdp          ; module "main.vdp"
 @SetScreen:                 ; SetScreen
-.loop:                      ; main.vdp.SetScreen.loop
+.loop:                      ; SetScreen.loop (since v1.21.0)
             RET
 Cls:                        ; main.vdp.Cls
 !KeepClsForLocal:           ; main.vdp.KeepClsForLocal (since v1.18.0)
@@ -742,9 +793,7 @@ hoi test    ; produce labels: main.hoi, 0>kip0, main.hoi.kip1
 Label      ; xxx.Label
 .Local     ; xxx.Label.Local
 @Label     ; Label
-.Local     ; xxx.Label.Local =&gt; duplicate label error
-@Label2    ; Label2
-.Local     ; xxx.Label2.Local
+.Local     ; Label.Local
 @yyy.Local ; yyy.Local
 yyy.Local  ; xxx.yyy.Local</programlisting></para>
         </example></para>
@@ -754,32 +803,30 @@ yyy.Local  ; xxx.yyy.Local</programlisting></para>
       <title>Temporary labels</title>
 
       <para>To keep the number of used labels reasonable it is possible to use
-      numbers as labels. These labels can only be used as labels to jump to.
-      To jump to these labels, use the number followed by an 'F' for forward
-      branches or a 'B' for backward branches. Temporary labels should be defined
-      in the same order during every pass of assembling, but they can be used
-      within macro, or repeating blocks (old sjasmplus versions didn't allow usage within macro).</para>
+      numbers as labels. To target these labels in all expressions use the number followed by an '_F' for forward
+      search or a '_B' for backward search. Temporary labels should be defined
+      in the same order during every pass of assembling, and they can be used
+      within macro, or repeating blocks.</para>
 
-      <para>Since v1.19.0 there is alternative syntax using underscore before 'B' and 'F', this
-        alternative underscored suffix enables temporary labels also for regular instructions
-        (in all expressions, same way as other labels).</para>
+      <para>Before v1.19.0 the syntax was using only letters 'B' and 'F' and was enabled only
+        for branching instructions (the old syntax still works for those, but only for those).</para>
 
       <para><example>
           <title>docs_examples/s_temp_labels.asm</title>
 
           <para><programlisting>        ADD A,E
-        JR NC,1F
+        JR NC,1_F   ; old syntax "1F"
         INC D
 1       LD E,A
 2       LD B,4
         LD A,(DE)
         OUT (152),A
-        DJNZ 2B
+        DJNZ 2_B    ; old syntax "2B"
 
         MACRO zing
             DUP 2
-                JR 1F
-1               DJNZ    1B
+                JR    1_F
+1               DJNZ  1_B
             EDUP
         ENDM
 
@@ -808,14 +855,14 @@ yyy.Local  ; xxx.yyy.Local</programlisting></para>
 $c     hexadecimal
 #c     hexadecimal
 0ch    hexadecimal
-0b1100 binary (v1.12.1)
+0b1100 binary
 %1100  binary
 1100b  binary
-0q14   octal (v1.12.1)
+0q14   octal
 14q    octal
 14o    octal</programlisting></para>
 
-      <para>(v1.12.1) Optional single quotes(') may be inserted between the digits as a separator
+      <para>Optional single quotes(') may be inserted between the digits as a separator
       (example: <computeroutput> ld a,%11'01'11'00 </computeroutput>).
       They are ignored by the assembler.</para>
 
@@ -837,7 +884,7 @@ $c     hexadecimal
 \? 63
 \' 39
 \" 34
-\0 0     ; since v1.11
+\0 0
 \A 7
 \B 8
 \D 127
@@ -847,7 +894,8 @@ $c     hexadecimal
 \R 13
 \T 9
 \V 11</programlisting><para>Inside single quotes two quotes after each other are
-    parsed as the apostrophe itself (since v1.11).</para><example>
+    parsed as the apostrophe itself.</para>
+  <para>Adding Z or C after quotes/apostrophes will make string zero-terminated or set top bit of last character (since v1.20.3).</para><example>
           <title></title>
 
           <para><programlisting>    BYTE "stringconstant\n" ; escape sequence assembles to newline
@@ -859,7 +907,8 @@ $c     hexadecimal
     LD A,'\E'   ; warning + truncating value to 'E' (0x45)
     LD A,'"'    ; A = 0x22
     LD A,"'"    ; A = 0x27
-    LD A,''''   ; A = 0x27 ; since v1.11</programlisting></para>
+    LD A,''''   ; A = 0x27
+    BYTE "AB"Z, "CD"C, 'E'Z, 'F'C ; hex: 41 42 00 43 C4 45 00 C6</programlisting></para>
         </example></para>
     </section>
 
@@ -868,7 +917,8 @@ $c     hexadecimal
 
       <para>Expressions are evaluated in signed 32 bits in this version of SjASMPlus (unless explicitly
 		  specified as unsigned, like ">>>" operator), so intermediate values have range -2147483648
-		  to +2147483647.</para>
+		  to +2147483647. True for boolean results is equal to value -1, false is equal to 0 (so
+		  result of compare or logical operators can be used as all-bit-mask further). </para>
 
       <para>'$' represents the current program counter. '$$' represents the
       current page in the current slot in the <link
@@ -1021,7 +1071,7 @@ $$lab $$lab    <indexterm id="op_label_page"><primary>$$label</primary></indexte
    */
    ;or you can write  LD A,B:LD B,D:LD D,H
 
-   ; since v1.13.1 it is possible and *recommended* to change the multi-arg delimiter
+   ; it is possible and *recommended* to change the multi-arg delimiter
    ; into ",,", to avoid some ambiguities with certain instructions.
    OPT --syntax=a
    LD A,B,,B,D,,D,H ; same as example above in default syntax
@@ -1278,11 +1328,28 @@ $$lab $$lab    <indexterm id="op_label_page"><primary>$$label</primary></indexte
       <para>To enable this mode you must use pseudo-op <link
       linkend="po_device">DEVICE</link>.</para>
 
-      <para>In this mode the compiler compiling program to virtual memory (as
-      at MSX's WB-ASS2, ZX-Spectrum's GENS, ZEUS, ALASM etc). After this all
-      you can use new pseudo-ops as <link linkend="s_pseudoops">SAVEBIN, SAVEDEV
-      SAVEHOB, SAVETRD, SAVETAP, PAGE, SLOT, MMU, LABELSLIST</link>, use special
-      functions in <link linkend="c_lua_scripting">Lua scripts</link> and use operators
+      <para>In this mode the assembler is assembling program into virtual memory (as
+      MSX's WB-ASS2, ZX-Spectrum's GENS, ZEUS, ALASM etc). You can also use pseudo-ops as
+      <link linkend="po_mmu">MMU</link>,
+      <link linkend="po_slot">SLOT</link>,
+      <link linkend="po_page">PAGE</link>,
+      <link linkend="po_savebin">SAVEBIN</link>,
+      <link linkend="po_savedev">SAVEDEV</link>,
+      <link linkend="po_savetap">SAVETAP</link>,
+      <link linkend="po_savesna">SAVESNA</link>,
+      <link linkend="po_savetrd">SAVETRD</link>,
+      <link linkend="po_savenex">SAVENEX</link>,
+      <link linkend="po_savecdt">SAVECDT</link>,
+      <link linkend="po_savecpcsna">SAVECPCSNA</link>,
+      <link linkend="po_savecpr">SAVECPR</link>,
+      <link linkend="po_saveamsdos">SAVEAMSDOS</link>,
+      <link linkend="po_save3dos">SAVE3DOS</link>,
+      <link linkend="po_savehob">SAVEHOB</link>,
+      <link linkend="po_bplist">BPLIST</link>,
+      <link linkend="po_setbp">SETBP</link>,
+      <link linkend="po_cspectmap">CSPECTMAP</link>,
+      <link linkend="po_labelslist">LABELSLIST</link>,
+      use special functions in <link linkend="c_lua_scripting">Lua scripts</link> and use operators
       <code>{address}, {b address}</code> to read WORD/BYTE from the virtual memory.</para>
 
       <para>If only single DEVICE is used in whole source batch, the device
@@ -1404,6 +1471,7 @@ StartProg:
               <para>Has only single slot of size 64kiB (slot 0), covering full Z80 CPU addressing range.
 				  There are 32 memory pages available, by default page 0 is mapped.
 				  That makes in total 2MiB of memory available (32 * 64 ki = 2 Mi).</para>
+              <para>This is currently recommended choice for ZX80/ZX81 development with DeZog debugger.</para>
             </listitem>
           </varlistentry>
 
@@ -1425,7 +1493,20 @@ StartProg:
             </listitem>
           </varlistentry>
 
+          <varlistentry>
+            <term>AMSTRADCPCPLUS<indexterm id="device_cpcplus"><primary>AMSTRADCPCPLUS</primary></indexterm></term>
+
+            <listitem>
+              <para>Has 4 slots (0-3) of size 0x4000 and 32 RAM pages (0-31)
+              of 0x4000 (512K total). The default page mapping is { 0, 1, 2, 3
+              }.</para>
+            </listitem>
+          </varlistentry>
+
         </variablelist></para>
+
+      <para>For CPC users this <ulink url="https://github.com/ClaireCheshireCat/dsk-lua">dsk-lua library</ulink>
+        may be of interest.</para>
 
       <para>If you want to see other devices you must write to us. See <link
       linkend="feedback">Feedback</link> chapter.</para>
@@ -1776,16 +1857,16 @@ END_OF_PROGRAM</programlisting></para>
           </varlistentry>
 
           <varlistentry>
-            <term>BPLIST<indexterm id="po_bplist"><primary>BPLIST</primary><seealso>SETBP</seealso></indexterm> &lt;filename&gt; [unreal|zesarux]</term>
+            <term>BPLIST<indexterm id="po_bplist"><primary>BPLIST</primary><seealso>SETBP</seealso></indexterm> &lt;filename&gt; [unreal|zesarux|mame]</term>
 
             <listitem>
 				<para>
 					<emphasis>Works only in real device emulation mode. See
 						<link linkend="po_device">DEVICE</link>.</emphasis>
 				</para>
-				<para>Opens file to export breakpoints info directly from ASM source, currently two
-					flavours of export are supported: <code>unreal</code> (default) and
-					<code>zesarux</code>. For latest Unreal emulators use filename "bpx.ini", you
+				<para>Opens file to export breakpoints info directly from ASM source, currently three
+					flavours of export are supported: <code>unreal</code> (default), <code>zesarux</code>
+					and <code>mame</code>. For latest Unreal emulators use filename "bpx.ini", you
 					can then load the file from the emulator UI. For ZEsarUX the file will contain
 					command-line options, which you can add to the command when launching the emulator.
 				</para>
@@ -1865,10 +1946,13 @@ END_OF_PROGRAM</programlisting></para>
 
             <listitem>
               <para>Same as <link linkend="po_byte">BYTE</link>, but every
-              last character of a string will have bit 7 set.<example>
+                last character of a string will have bit 7 set. Single character in apostrophes is NOT considered as string.
+                <example>
                   <title></title>
 
-                  <para><programlisting>    DC "kip" ; same as BYTE "ki",'p'|128</programlisting></para>
+                  <para><programlisting>    DC "kip" ; same as BYTE "ki",'p'|128
+    DC 'A'   ; not a string, will produce 0x41 like BYTE 'A'
+    DC "A", 'AB', "AB" ; three strings producing: C1 41 C2 41 C2</programlisting></para>
                 </example></para>
             </listitem>
           </varlistentry>
@@ -2069,6 +2153,7 @@ counter = counter + 1
  NOSLOT64K      ; Single slot (slot 0) covering full 64kiB address range of Z80, 32 pages
  AMSTRADCPC464  ; Amstrad CPC 464 (4 slots, 4 pages, slot/page size 0x4000, default map: 0, 1, 2, 3)
  AMSTRADCPC6128 ; Amstrad CPC 6128 (like 464 with 8 pages)
+ AMSTRADCPCPLUS ; Amstrad CPC Plus (like 464 with 32 pages)
 
  ;disable:
    DEVICE NONE
@@ -2085,7 +2170,7 @@ counter = counter + 1
               is converted to a byte value.</para>
 
               <para>A hyphen '-' (also '.' and '_') represents 0 and any other non-whitespace character
-              represents 1. It ignores spaces, use them for formatting if you like. Warning, "DG 10100001" is value 255, because character '0' is not a dash '-'. (since v1.11)<example>
+              represents 1. It ignores spaces, use them for formatting if you like. Warning, "DG 10100001" is value 255, because character '0' is not a dash '-'.<example>
                   <title></title>
                   <para><programlisting>    DG 1-1----1  ; store 161 at the current location
     DG ...# #... .##. .... ; store two bytes: 0x18, 0x60</programlisting></para>
@@ -2098,7 +2183,7 @@ counter = counter + 1
 
             <listitem>
               <para>The data string comprises pairs of hexadecimal digits, each pair is converted to
-              a byte value. You can add spaces between pairs as you like. (since v1.11)<example>
+              a byte value. You can add spaces between pairs as you like.<example>
                   <title></title>
                   <para><programlisting>    DH "0123456789ABCDEF"   ; eight bytes #01 #23 ...
     DH "01 23  45 67"       ; four bytes #01 #23 #45 #67</programlisting></para>
@@ -2203,6 +2288,7 @@ will output to the console strings:
             <listitem>
               <para>DUP specifies the number of times to generate the
               following lines until an EDUP pseudo-op is encountered. DUP can be used in macro's.</para>
+              <para>DUP itself is internally implemented almost like anonymous macro emitted count-times.</para>
               <para>Optional second argument (since v1.20.2) is label name to have repetition index
                 available inside the block (values 0, 1, 2, 3, ...).
                <example>
@@ -2428,8 +2514,9 @@ Kip   EQU 0x23*256 + low $</programlisting></para>
 
             <listitem>
               <para>To include a binary file into the outputfile. The offset
-              and length are optional. Added in v1.12.1: if negative offset or length is provided,
-              it counts relatively from the end of the file.<example>
+              and length are optional. If negative offset or length is provided,
+              it counts relatively from the end of the file.</para>
+              <para>(since v1.21.0) The rules of <link linkend="po_include">INCLUDE</link> are used for file search.<example>
                   <title></title>
 
                   <para><programlisting>    INCBIN "gfx.scc",7        ; include gfx.scc, skip first 7 bytes
@@ -2445,12 +2532,13 @@ Kip   EQU 0x23*256 + low $</programlisting></para>
 
             <listitem>
               <para>To include a data from a hobeta file into the outputfile.
-              The offset and length are optional.<example>
+              The offset and length are optional.</para>
+              <para>(since v1.21.0) The rules of <link linkend="po_include">INCLUDE</link> are used for file search.<example>
                   <title></title>
 
                   <para><programlisting>    INCHOB "gfx.$c",7        ; include gfx.scc, skip first 7 bytes
     INCHOB "sprs.$c",3,256   ; include 256 bytes from offset 3
-    INCHOB gfx.$c ,7        ; note the space between the filename and the ',7' here :)</programlisting></para>
+    INCHOB gfx.$c ,7         ; note the space between the filename and the ',7' here :)</programlisting></para>
                 </example></para>
             </listitem>
           </varlistentry>
@@ -2467,11 +2555,16 @@ Kip   EQU 0x23*256 + low $</programlisting></para>
               brackets are used, the commandline directories are searched
               before the current directory.</para>
               <para>The directory used to launch the assembling process is automatically added
-              to the list (as if "<code>-i.</code>" was added to command line manually)
-              (v1.14.0 and v1.14.1 don't add it, reverted back for v1.14.2). If you want to start
+              to the list (as if "<code>-i .</code>" was added to command line manually). If you want to start
               with completely empty include-path list, use "<code>--inc</code>" option
               early (order matters) without the "=" to empty the current list, like:
-              <code>sjasmplus --inc --inc=path1 --inc=path2 file.asm</code>
+              <code>sjasmplus --inc --inc= path1 --inc= path2 file.asm</code></para>
+              <para>Current implementation expect INCLUDE to be used only outside of macros or
+                conditional/repeatable blocks, so directives like MACRO, DUP, WHILE, IF/IFDEF/../ENDIF should
+                be always nested into single file, not attempting to INCLUDE other pieces of asm sources from
+                within their blocks. While some trivial cases may still work even with current implementation,
+                you are likely to run into weird bugs and inconsistencies if you combine these "contexts of
+                assembling" in other order, not having INCLUDE at top of everything.
               <example>
                   <title></title>
 
@@ -2507,7 +2600,8 @@ Kip   EQU 0x23*256 + low $</programlisting></para>
 
             <listitem>
               <para>To include a file from a TRD image into the outputfile.
-              The offset and length are optional.<example>
+              The offset and length are optional.</para>
+              <para>(since v1.21.0) The rules of <link linkend="po_include">INCLUDE</link> are used for file search.<example>
                   <title></title>
 
                   <para><programlisting>    INCTRD "test.trd","mygfx.C" ; include mygfx.C from test.trd
@@ -3003,7 +3097,7 @@ OUTPUT &lt;filename&gt;,a  ; append</synopsis>
             <para>SAVECDT HEADLESS &lt;cdtname&gt;,&lt;start&gt;,&lt;length&gt;[,&lt;sync&gt;[,&lt;format&gt;]]</para></term>
 
             <listitem>
-              <para><emphasis>Works only in Amstrad device emulation mode. See
+              <para><emphasis>Works only in AMSTRADCPC464 / AMSTRADCPC6128 real device emulation mode. See
               <link linkend="po_device">DEVICE</link>.</emphasis></para>
 
               <para>Manipulate CDT file (tape/TZX file format used by Amstrad CPC emulators).<example>
@@ -3034,7 +3128,7 @@ OUTPUT &lt;filename&gt;,a  ; append</synopsis>
             <term>SAVECPCSNA<indexterm id="po_savecpcsna"><primary>SAVECPCSNA</primary></indexterm> &lt;filename&gt;[,&lt;startadressofprogram&gt;]</term>
 
             <listitem>
-              <para><emphasis>Works only in AMSTRADCPC464 / AMSTRADCPC6128 real device emulation mode. See
+              <para><emphasis>Works only in AMSTRADCPC464 / AMSTRADCPC6128 device emulation mode. See
               <link linkend="po_device">DEVICE</link>.</emphasis></para>
 
               <para>Save the snapshot for emulators of Amstrad CPC machines. (If start address is omitted,
@@ -3054,6 +3148,28 @@ OUTPUT &lt;filename&gt;,a  ; append</synopsis>
 START  .... ;some code
     RET
     SAVECPCSNA "game.sna",START ;save snapshot to file game.sna. Start address is START ($1200)</programlisting></para>
+                </example></para>
+            </listitem>
+          </varlistentry>
+
+          <varlistentry>
+            <term>SAVECPR<indexterm id="po_savecpr"><primary>SAVECPR</primary></indexterm>
+                &lt;filename&gt;[,&lt;size = 32&gt;]</term>
+
+            <listitem>
+              <para><emphasis>Works only in AMSTRADCPCPLUS device emulation mode. See
+              <link linkend="po_device">DEVICE</link>.</emphasis></para>
+
+              <para>Saves memory per blocks of 16KiB; 1 means 16KiB, 2 means
+                32KiB, ...<example>
+                  <title></title>
+
+                  <para><programlisting>    DEVICE AMSTRADCPCPLUS
+    ... some code ...
+
+    ; by default a size of 32 (512KiB) is used
+    ; here we save a block of 16KiB
+    SAVECPR "code.cpr", 1</programlisting></para>
                 </example></para>
             </listitem>
           </varlistentry>
@@ -3387,7 +3503,7 @@ var2    DB 2      ; WpMem - not exported, case sensitive!</programlisting></para
 
                   <para><programlisting>    EMPTYTAP screen.tap
 
-    TAPOUT screen.tap,0
+    TAPOUT screen.tap ,0    ; unquoted filename needs space to end it
     DB 3
     DB 'ScreenName'
     DW 6912
@@ -3460,6 +3576,7 @@ var2    DB 2      ; WpMem - not exported, case sensitive!</programlisting></para
             <listitem>
               <para>While expression evaluates to non-zero value, generates following lines until
 				  an ENDW (EDUP/ENDR alias) pseudo-op is encountered.</para>
+              <para>WHILE itself is internally implemented almost like anonymous macro emitted repeatedly.</para>
 			  <para>The optional guardian-counter value will abort the WHILE if there are
 				  more iterations, default guardian-counter is set to 100k.
 				<example>
@@ -3689,6 +3806,18 @@ LABEL5:
       lines will be stored as the macro-body until an ENDM pseudo-op is
       encountered. Macro's have to be defined before their use. Macro's name
       must be unique (even if two macros differ by required arguments).
+      </para>
+      <para>Macros (also internal ones like DUP/REPT/..) are stored as unparsed
+      text and when used, the stored text is expanded and assembled as newly
+      injected lines of source code.
+      This expansion could cause in edge cases slight difference how the text is
+      parsed and assembled, so using directives further affecting the parsing
+      like <link linkend="po_lua">LUA</link> or <link linkend="po_include">INCLUDE</link>
+      inside macro definition is in current version unsupported. If it works
+      for you in some trivial case, then you can keep using it, it's unlikely
+      the future versions of sjasmplus will do worse than current, but if you
+      hit weird bug for code which works outside of macro, then you are out
+      of luck (unless you want to rewrite sjasmplus internal parsing code).
 	  <example>
           <title>Macro without parameters (docs_examples/s_macros.asm)</title>
 
@@ -3905,7 +4034,7 @@ Main
                   the structure is later used.
               ('#', DS and DEFS may be used instead of BLOCK).</para>
 
-              <para>(since v1.11) If <code>fillbyte</code> is omitted, the device memory
+              <para>If <code>fillbyte</code> is omitted, the device memory
                   content in the block area is preserved (not zeroed).</para>
             </listitem>
           </varlistentry>
@@ -3917,7 +4046,7 @@ Main
               <para>To <link linkend="po_align">align</link> the offset. If the expression
                   is omitted, 4 is assumed. ('##' May be used instead of ALIGN).</para>
 
-              <para>(since v1.11) If the byte is omitted, device memory content is preserved (not zeroed).</para>
+              <para>If the byte is omitted, device memory content is preserved (not zeroed).</para>
             </listitem>
           </varlistentry>
 
@@ -4121,14 +4250,12 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
       <title>Why?</title>
 
       <para><graphic align="top" fileref="lua.gif" />Why is scripting engine
-      as Lua embedded to the compiler? Answer is simple: it can be used to add extra
+        as <ulink url="https://www.lua.org/">Lua</ulink> embedded to the assembler? Answer is simple: it can be used to add extra
       features by users. And Lua is small enough, fast and powerful scripting engine.</para>
 
-      <para>Since v1.20.0 sjasmplus integrates Lua 5.4.4. Before it was using Lua 5.1.5 with
-        few 3rd party external libraries, which were mostly non-functional due to neglected
-        refreshing of tolua++ tool and integration itself. The upgrade to Lua 5.4 was done
-        along replacing tolua++ with LuaBridge2.6, and while there was put lot of effort
-        to maintain original Lua bindings to sjasmplus, there are few changes to the API.</para>
+      <para>Sjasmplus currently includes Lua 5.4.7 (since v1.21.0). The upgrade from Lua 5.1 in v1.20.0
+        was done along replacing tolua++ with LuaBridge2.6 and while there was lot of effort
+        to maintain original Lua bindings to sjasmplus, there were few changes to the API.</para>
 
       <para>If your old source does not work any more after upgrade, please carefully check
         against the <link linkend="s_lua_sjasmplus_bindings">bindings documentation</link> below.</para>
@@ -4160,7 +4287,13 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
       <title>SjASMPlus functions bindings to Lua</title>
 
       <para>From Lua you can control some variables and use functions of the
-      compiler. Complete list:</para>
+        compiler. It's expected to rely on <code>_c</code>, <code>_pc</code> and <code>_pl</code>
+        bindings to use regular pseudo-operations (directives), the direct bindings are either
+        convenience for specific ones or exist due to historical reasons. Future extensions
+        of bindings will mostly focus on giving access to internal state or functionality which
+        is not easily accessible through regular asm directives.</para>
+
+      <para>Complete list:</para>
 
       <para><variablelist>
           <varlistentry>
@@ -4268,7 +4401,7 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
             <term>[boolean] sj.insert_label("name", address)<indexterm id="lua_sj_insert_label"><primary>sj.insert_label(..)</primary></indexterm></term>
 
             <listitem>
-              <para>Add new label. Returns true when label was successfully inserted (or value modified first time in next assembling pass), false when name is invalid or label was already defined.</para>
+              <para>Add new label. Returns true when label was successfully inserted (or value modified first time in next assembling pass), false when name is invalid or label was already defined. Does apply current namespace and label rules to provided "name".</para>
             </listitem>
           </varlistentry>
 
@@ -4276,7 +4409,20 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
             <term>[integer] sj.current_address<indexterm id="lua_sj_current_address"><primary>sj.current_address</primary></indexterm></term>
 
             <listitem>
-              <para>Read-only variable. Current address.</para>
+              <para>Current address, writing new value to it is same as <code>ORG value</code>.</para>
+            </listitem>
+          </varlistentry>
+
+          <varlistentry>
+            <term>[integer] sj.pass<indexterm id="lua_sj_pass"><primary>sj.pass</primary></indexterm></term>
+
+            <listitem>
+              <para>Read-only variable. Number of current pass (1 to 3). Pass 1 is very first pass (expect forward declared
+                labels being not known to code yet). Pass 2 is pass when all symbols should be already defined and final
+                layout of code and data should be produced, but machine code is not emitted yet (if ever multi-pass feature
+                happens, value 2 will be returned for all intermediate passes until the code layout is stable and ready for
+                final pass). Pass 3 is final pass when not only everything should match pass 2 but also machine code is being
+                emitted and virtual device memory is being updated and could be read back.</para>
             </listitem>
           </varlistentry>
 
@@ -4349,6 +4495,14 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
             </listitem>
           </varlistentry>
 
+         <varlistentry>
+            <term>[string] sj.get_modules()<indexterm id="lua_sj_get_modules"><primary>sj.get_modules()</primary></indexterm></term>
+
+            <listitem>
+              <para>Return current modules namespace. Returns an empty string if not in a module.</para>
+            </listitem>
+          </varlistentry>
+
           <varlistentry>
             <term>[boolean] sj.set_device("id" = "NONE", ramtop = 0)<indexterm id="lua_sj_set_device"><primary>sj.set_device(..)</primary></indexterm></term>
 
@@ -4373,6 +4527,14 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
               <para>Set current slot to "number". Works as pseudo-op <link linkend="po_slot">SLOT</link>.</para>
               <para>(since v1.20.0) You can also use starting address of slot instead, ie. for ZX128
                 <code>sj.set_slot(0x8000)</code> is alias of <code>sj.set_slot(2)</code>.</para>
+            </listitem>
+          </varlistentry>
+
+          <varlistentry>
+            <term>[integer] sj.get_page_at(address = sj.current_address)<indexterm id="lua_sj_get_page_at"><primary>sj.get_page_at(..)</primary></indexterm></term>
+
+            <listitem>
+              <para>Get current page at "address". Returns -1 for invalid address or in no device mode.</para>
             </listitem>
           </varlistentry>
 
@@ -4416,11 +4578,11 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
     </section>
 
     <section id="s_lua_third_party_libs">
-      <title>Third-party embedded library(ies)</title>
+      <title>Third-party embedded libraries</title>
 
       <para><emphasis>None at this moment.</emphasis></para>
 
-      <para>Since v1.20.0 the sjasmplus integrates Lua 5.4.4.</para>
+      <para>Since v1.20.0 the sjasmplus integrates Lua 5.4.4 (now 5.4.7).</para>
 
       <para>The libraries included in older versions of sjasmplus: lpack.c, bit (bitwise operators)
         and hex (convert to/from hexa numbers) are now all part of the standard Lua 5.4.</para>
@@ -4430,6 +4592,33 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
 
       <para>For small example check the test <code>tests/lua_examples/trivial/lua_standard_libs.asm</code></para>
 
+    </section>
+
+    <section id="s_lua_third_party_libs_ext">
+      <title>Third-party external libraries</title>
+
+      <para>The default build method of sjasmplus does link Lua interpreter statically &dash; this is not compatible
+        with dynamically loaded extensions (shared libraries). You may encounter error similar to this:</para>
+
+      <para><code>error loading module 'lpeg' from file '/usr/lib/x86_64-linux-gnu/lua/5.4/lpeg.so'(0): error: [LUA] undefined symbol: lua_gettop</code></para>
+
+      <para>You can rebuild the sjasmplus configured to use the OS shared Lua library by reconfiguring the build:
+        <example>
+          <title>Configure and build sjasmplus to use shared lib for Lua</title>
+
+          <para><programlisting>
+# building with make:
+$ make clean &amp;&amp; USE_BUNDLED_LUA=0 make
+# test final binary with your extension and install it where you wish
+
+
+# building with cmake:
+$ cmake -DSYSTEM_LUA=ON -DCMAKE_BUILD_TYPE=Release -S . -B build
+$ cmake --build build
+$ cmake --install build</programlisting></para>
+        </example>
+        This should make Lua interpreter compatible with those extensions and with a bit of luck it will be still
+        compatible with sjasmplus bindings &dash; allowing you to use also the extension API in your code.</para>
     </section>
 
     <section id="s_lua_examples">
@@ -4567,7 +4756,8 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
       https://specnext.dev/wiki/NEX_file_format</ulink>. In short it is header + loading screen +
       like-snapshot binary and remaining resources appended after.</para>
 
-  <para>Sjasmplus currently supports V1.2 and V1.3 of NEX file format (see wiki for details).</para>
+  <para>Sjasmplus currently supports official V1.2 of NEX file format (see wiki for details). The "V1.3" features
+    are currently unofficial extension which does not work with regular NextZXOS distro and require special loader (nexload2).</para>
 
   <para>As such, the SAVENEX commands are available only in ZXSPECTRUMNEXT device emulation mode,
 	  see <link linkend="po_device">DEVICE</link>.</para>
@@ -4610,7 +4800,7 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
 					  released back).
 				  </para>
 				  <para>
-					  The fileVersion can be 2 (NEX V1.2) or 3 (NEX V1.3), which will enforce the
+					  The fileVersion can be 2 (official NEX V1.2) or 3 (unofficial extension V1.3), which will enforce the
 					  specified version of file. Otherwise the file is V1.2 by default and will
 					  auto-switch to V1.3 when some V1.3 feature is configured/used. When version 2
 					  is enforced, any usage of V1.3 feature will emit error.
@@ -4903,6 +5093,7 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
 			  </term>
 			  <listitem>
 				  <para>
+					  The NEX format V1.3 feature.
 					  Can be used after <link linkend="nex_open">OPEN</link> and before first <link
 						  linkend="nex_auto">AUTO</link> or <link linkend="nex_bank">BANK</link>
 					  command (the copper data are stored between screen and bank data).
@@ -4951,12 +5142,12 @@ head1   BLOCK_HEADER {      ; Multi-line initialization requires curly braces.
 		  
 		  <varlistentry>
 			  <term id="nex_close">
-				  SAVENEX CLOSE [&lt;fileToAppend&gt;]
+				  SAVENEX CLOSE [&lt;fileToAppend&gt;, ...]
 			  </term>
 			  <listitem>
 				  <para>
 					  Can be used after <link linkend="nex_open">OPEN</link>. The currently open NEX
-					  file will be finalized (header adjusted), and optional extra file just appended
+					  file will be finalized (header adjusted), and optional extra files appended
 					  to the end of NEX file.
 				  </para>
 			  </listitem>

@@ -536,7 +536,7 @@ static bool ReplaceDefineInternal(char* lp, char* const nl) {
 							++val;
 							a = a->next;
 						}
-						sprintf(defarrayCountTxt, "%d", val);
+						SPRINTF1(defarrayCountTxt, 16, "%d", val);
 						ver = defarrayCountTxt;
 					} else {
 						char* expLp = lp + ('[' == *lp);	// the '[' will become part of subId in didParseBrackets
@@ -743,7 +743,6 @@ void ParseLabel() {
 		if (!IsDEFL) SetLastParsedLabel(tp);
 		unsigned traits = (IsEQU ? LABEL_IS_EQU : 0) | (IsDEFL ? LABEL_IS_DEFL : 0) | (smcOffset ? LABEL_IS_SMC : 0);
 		if (pass == LASTPASS) {
-
 			SLabelTableEntry* label = LabelTable.Find(tp, true);
 			if (nullptr == label && IsDEFL) {	// DEFL labels can be defined as late as needed (including pass3)
 				if (LabelTable.Insert(tp, val, traits)) label = LabelTable.Find(tp, true);
@@ -769,6 +768,8 @@ void ParseLabel() {
 				LabelTable.Update(tp, val);
 
 				delete[] buf;
+			} else {
+				label->updatePass = pass;	// just "touch" it here in third pass
 			}
 		} else if (pass == 2 && !LabelTable.Insert(tp, val, traits, equPageNum)) {
 			if (!LabelTable.Update(tp, val)) assert(false); // unreachable, update will always work after insert failed
@@ -921,7 +922,6 @@ bool PrepareNonBlankMultiLine(char*& p) {
 }
 
 void ParseLine(bool parselabels) {
-
 	if (PrepareLine()) return;
 
 	if (eolComment && IsSldExportActive()) SldTrackComments();

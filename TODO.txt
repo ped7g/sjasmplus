@@ -5,11 +5,64 @@ scratch area + TODO keeper for sjasmplus developers:
 ====================
 Ped:
 
-makefile xz -> `tar cvfJ` src package (drop LuaBridge except LuaBridge/Source, drop build, etc..)
+add more C escape sequences: https://en.cppreference.com/w/c/language/escape
 
-coverage keeps fluctuating because of io_nex.cpp `SNexFile::~SNexFile()`, probably depends on compiler's exact version and mood???
--> it's global `static SNexFile nex;` -> add maybe unit test instancing it as local variable to enforce exercising destructor?
-(not so simple, as unit test doesn't know the struct definition and it's private to io_nex.cpp)
+STRING OPER: ".." like Lua?? And #"str" to count?:
+ similarly the string operators request could maaaaayyybeeee work inside
+the quoted string parser, but need to think more about it, if it will
+collide with something or not (`ld hl,"ab" + "cd"` is valid right now,
+but is it useful? Does replacing this with string+ hurt too much?
+What about `ld hl,"ab"|128` or `ld hl,"ab"+128` ... how far to go with
+string operators? Let's not turn sjasmplus into another JS fiasco :D)
+
+Cirrus-CI .cirrus.yml:
+- name: coveralls.io coverage report (linux gcc6):
+  GCC14 still doesn't have as perfect coverage report as GCC6 (versions between I tried were also imperfect),
+  so for the moment I will stick with 14 and see how it will go, but update probably ASAP and keep tracking coverge results.
+
+- name: MacOS default CC build (with unit tests):
+  I still get warning message "Only ghcr.io/cirruslabs/macos-runner:sonoma is allowed. Automatically upgraded."
+  even with "macos-sonoma-base" image which seems to exist -> not sure what is happening.
+  There will be sequoia probably soon, so switch to that later and re-check.
+
+check for Z80 in/out having also [] brackets and syntax brackets-only mode? (currently only `(c)` and `(n)` works)
+
+ARM! https://cirrus-ci.org/guide/linux/
+> Cirrus CI supports container and arm_container instances in order to run your CI workloads on amd64 and arm64 platforms respectively.
+
+@Janko at Next discord: `--raw-fill-gaps` to produce fill when second ORG is used and --raw output. (like org $2000 ... org $2100 -> test.dot)
+@Janko: I would rather prefer a new  -o  option which by default also sets the device to "just 64K" model and does what SAVE would do
+    ^ some implicit device thing? like NOSLOT64K? But needs modified regions (or min/max program counter) - should NOT depend on zeroed values :(
+
+ad APPENDBIN - also maybe extend SAVENEX to get var-arg list, not just single file.
+(but then it may not fit on single line, so some extra appendbin would be still useful)
+
+-------------
+can you add a --utc option to sjasmplus so that I don't have to change my hardware time if I want __DATE__ to use UTC.
+I want UTC time zone for release dates, not local time zone?
+
+sjasm.cpp:687
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm = *std::localtime(&now_c);   // ??? this ???
+
+time.h:
+/* Return the `struct tm' representation of *TIMER
+   in Universal Coordinated Time (aka Greenwich Mean Time).  */
+extern struct tm *gmtime (const time_t *__timer) __THROW;
+
+/* Return the `struct tm' representation
+   of *TIMER in the local timezone.  */
+extern struct tm *localtime (const time_t *__timer) __THROW;
+-------------
+
+tables.cpp:1178: error not covered by tests why?? "if (haakjes) { Error("closing } missing"); }"
+sjasm.cpp:789: open DISP is also not reported? intentionally? "if (DISP_NONE != PseudoORG)"
+
+unittest-cpp seems to be pretty dead now, consider migration, for example to https://github.com/neacsum/utpp
+(author claims C++20, header only and somewhat more compatible with GoogleTest)
+
+https://www.codefactor.io/repository/github/z00m128/sjasmplus
 
 APPENDBIN to append any-size binary to other file, like for producing large dot files with data files appended
 (and let's do GiB+ support as well, INCBIN is limited to 2GiB by `int32` for length and does read it all into heap memory)
@@ -26,6 +79,8 @@ listing with pre-substituted original source line included
 
 relocation -> extra support for Next driver banks?
 (see Robin's https://github.com/Threetwosevensixseven/ZXRelocate to learn what exactly that means)
+(also https://github.com/Threetwosevensixseven/JetDPCL5/tree/main/src/asm/drv )
+(also https://pastebin.com/4G5nf9qv )
 
 check https://github.com/google/AFL
 
@@ -142,12 +197,15 @@ cmake -DCMAKE_BUILD_TYPE=Release -DSYSTEM_LUA=ON -DCMAKE_INSTALL_PREFIX:PATH=~/.
 
 https://www.debian.org/doc/manuals/distribute-deb/distribute-deb.html
 
+https://wiki.debian.org/Packaging/Learn#Level_3:_Packaging_more_complicated_modules
+Next step is packaging more complicated modules that will involve things like, modifying some upstream files,
+ !!!!!!!!!!!!  removing some files from source tarball,   !!!!!!!!!!!!
+ generating some files from source, getting the source tarball from a git commit etc.
+
+So maybe there is a way to provide "OSS" sjasmplus src tar for .deb build from full repo (removing some files in tests which don't fit OSS licensing)
 
 ====================
 Docs:
-
-"pseudo-ops as SAVEBIN, SAVEHOB, SAVETRD, SAVETAP, PAGE, SLOT, LABELSLIST and use special functions in Lua scripts."
-^^ link each?
 
 DEVICE needs better description? Issue #55
 ... and also SAVENEX and default ZXNEXT device... again...
@@ -166,6 +224,7 @@ Major changes on my mind:
 * n-pass assembling
 * syntax by default similar to `--syntax=abflL`
 * GNU/GCC/clang-ification of assembler, mimicking the general tools as much as possible, like formatting of error reports, options with identical syntax where it makes sense, etc.. (should help with other tools unaware of sjasmplus specifically, but capable to process gcc/clang stuff)
+* GCC include path rules (anchoring from launch dir or main file dir, not changing anchor with each source file)
 * `define` substitution formalized even more (and refactored)
 * C++ification of syntax and language, i.e. changing operator precedence, probably apostrophe enclosed string/char literals escaping rules, etc.
 * new operators (string and device-memory/labels related, type/checks, maybe var-arg-like stuff)

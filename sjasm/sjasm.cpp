@@ -37,7 +37,7 @@ static void PrintHelpMain() {
 	// Please keep help lines at most 79 characters long (cursor at column 88 after last char)
 	//     |<-- ...8901234567890123456789012345678901234567890123456789012... 80 chars -->|
 	_COUT "Based on code of SjASM by Sjoerd Mastijn (http://www.xl2s.tk)" _ENDL;
-	_COUT "Copyright 2004-2023 by Aprisobal and all other participants" _ENDL;
+	_COUT "Copyright 2019-2025 by Peter Helcmanovsky and all other participants" _ENDL;
 	//_COUT "Patches by Antipod / boo_boo / PulkoMandy and others" _ENDL;
 	//_COUT "Tidy up by Tygrys / UB880D / Cizo / mborik / z00m" _ENDL;
 	_COUT "\nUsage:\nsjasmplus [options] sourcefile(s)" _ENDL;
@@ -47,7 +47,7 @@ static void PrintHelpMain() {
 	_COUT "  --i8080                  Limit valid instructions to i8080 only (+ no fakes)" _ENDL;
 	_COUT "  --lr35902                Sharp LR35902 CPU instructions mode (+ no fakes)" _ENDL;
 	_COUT "  --outprefix=<path>       Prefix for save/output/.. filenames in directives" _ENDL;
-	_COUT "  -i<path> or -I<path> or --inc=<path> ( --inc without \"=\" to empty the list)" _ENDL;
+	_COUT "  -i <path> or -I <path> or --inc= <path> (--inc only to empty the list)" _ENDL;
 	_COUT "                           Include path (later defined have higher priority)" _ENDL;
 	_COUT "  --lst[=<filename>]       Save listing to <filename> (<source>.lst is default)" _ENDL;
 	_COUT "  --lstlab[=sort]          Append [sorted] symbol table to listing" _ENDL;
@@ -61,7 +61,7 @@ static void PrintHelpMain() {
 	_COUT "  --nologo                 Do not show startup message" _ENDL;
 	_COUT "  --msg=[all|war|err|none|lst|lstlab]" _ENDL;
 	_COUT "                           Stderr messages verbosity (\"all\" is default)" _ENDL;
-	_COUT "  --fullpath               Show full path to file in errors" _ENDL;
+	_COUT "  --fullpath[=on|rel|off]  Input file paths: full | CWD relative | name only" _ENDL;
 	_COUT "  --color=[on|off|auto]    Enable or disable ANSI coloring of warnings/errors" _ENDL;
 	_COUT " Other:" _ENDL;
 	_COUT "  -D<NAME>[=<value>] or --define <NAME>[=<value>]" _ENDL;
@@ -97,27 +97,24 @@ namespace Options {
 		tcols = enabled ? &tcols_ansi : &tcols_none;
 	}
 
-	char OutPrefix[LINEMAX] = {0};
-	char SymbolListFName[LINEMAX] = {0};
-	char ListingFName[LINEMAX] = {0};
-	char ExportFName[LINEMAX] = {0};
-	char DestinationFName[LINEMAX] = {0};
-	char RAWFName[LINEMAX] = {0};
-	char UnrealLabelListFName[LINEMAX] = {0};
-	char CSpectMapFName[LINEMAX] = {0};
+	std::filesystem::path OutPrefix {""};
+	std::filesystem::path SymbolListFName {""};
+	std::filesystem::path ListingFName {""};
+	std::filesystem::path ExportFName {""};
+	std::filesystem::path DestinationFName {""};
+	std::filesystem::path RAWFName {""};
+	std::filesystem::path UnrealLabelListFName {""};
+	std::filesystem::path CSpectMapFName {""};
 	int CSpectMapPageSize = 0x4000;
-	char SourceLevelDebugFName[LINEMAX] = {0};
+	std::filesystem::path SourceLevelDebugFName {""};
 	bool IsDefaultSldName = false;
 
-	char ZX_SnapshotFName[LINEMAX] = {0};
-	char ZX_TapeFName[LINEMAX] = {0};
-
 	EOutputVerbosity OutputVerbosity = OV_ALL;
-	bool IsLabelTableInListing = 0;
+	bool IsLabelTableInListing = false;
 	bool IsDefaultListingName = false;
-	bool IsShowFullPath = 0;
+	EFileVerbosity FileVerbosity = FNAME_BASE;
 	bool AddLabelListing = false;
-	bool HideLogo = 0;
+	bool HideLogo = false;
 	bool ShowHelp = false;
 	bool ShowHelpWarnings = false;
 	bool ShowVersion = false;
@@ -130,8 +127,10 @@ namespace Options {
 	bool IsBigEndian = false;
 	bool EmitVirtualLabels = false;
 
-	// Include directories list is initialized with "." directory
-	CStringsList* IncludeDirsList = new CStringsList(".");
+	// Include directories list is initialized with "." (aka LaunchDirectory aka CWD) directory
+	std::vector<std::filesystem::path> IncludeDirsList{"."};
+		// ^ Not empty string, because that fails include path existence check
+		// ^ Not empty list b/c legacy: launch dir is implicit include path (unless reset by `--inc`)
 
 	CDefineTable CmdDefineTable;		// is initialized by constructor
 
@@ -197,7 +196,7 @@ static char* globalDeviceID = nullptr;
 static aint globalDeviceZxRamTop = 0;
 
 // extend
-const char* fileNameFull = nullptr, * fileName = nullptr;	//fileName is either full or basename (--fullpath)
+fullpath_p_t fileNameFull = nullptr;
 char* lp, line[LINEMAX], temp[LINEMAX], * bp;
 char sline[LINEMAX2], sline2[LINEMAX2], * substitutedLine, * eolComment, ModuleName[LINEMAX];
 
@@ -240,9 +239,8 @@ source_positions_t::size_type smartSmcIndex;
 uint32_t maxlin = 0;
 aint CurAddress = 0, CompiledCurrentLine = 0, LastParsedLabelLine = 0, PredefinedCounter = 0;
 aint destlen = 0, size = -1L, comlin = 0;
-const char* CurrentDirectory=NULL;
 
-char* vorlabp=NULL, * macrolabp=NULL, * LastParsedLabel=NULL;
+char* macrolabp=NULL, * LastParsedLabel=NULL;
 std::stack<SRepeatStack> RepeatStack;
 CStringsList* lijstp = NULL;
 CLabelTable LabelTable;
@@ -261,7 +259,7 @@ static void ReserveLabelKeywords() {
 	}
 }
 
-void InitPass() {
+static void InitPass() {
 	assert(sourcePosStack.empty());				// there's no source position [left] in the stack
 	Relocation::InitPass();
 	Options::SSyntax::restoreSystemSyntax();	// release all stored syntax variants and reset to initial
@@ -274,8 +272,7 @@ void InitPass() {
 	} while (maxpow10 <= maxlin);
 	*ModuleName = 0;
 	SetLastParsedLabel(nullptr);
-	if (vorlabp) free(vorlabp);
-	vorlabp = STRDUP("_");
+	InitVorlab();
 	macrolabp = NULL;
 	listmacro = 0;
 	CurAddress = 0;
@@ -338,7 +335,7 @@ void InitPass() {
 	if (LASTPASS == pass) OpenExpFile();					// will not do anything if filename is empty
 }
 
-void FreeRAM() {
+static void FreeRAM() {
 	if (Devices) {
 		delete Devices;		Devices = nullptr;
 	}
@@ -348,7 +345,6 @@ void FreeRAM() {
 	for (CDeviceDef* deviceDef : DefDevices) delete deviceDef;
 	DefDevices.clear();
 	lijstp = NULL;		// do not delete this, should be released by owners of DUP/regular macros
-	free(vorlabp);		vorlabp = NULL;
 	LabelTable.RemoveAll();
 	DefineTable.RemoveAll();
 	SetLastParsedLabel(nullptr);
@@ -356,8 +352,6 @@ void FreeRAM() {
 		free(PreviousIsLabel);
 		PreviousIsLabel = nullptr;
 	}
-	if (Options::IncludeDirsList) delete Options::IncludeDirsList;
-	ReleaseArchivedFilenames();
 }
 
 
@@ -377,12 +371,11 @@ namespace Options {
 		char opt[LINEMAX];
 		char val[LINEMAX];
 
-		// returns 1 when argument was processed (keyword detected, value copied into buffer)
-		// If buffer == NULL, only detection of keyword + check for non-zero "value" is done (no copy)
-		int CheckAssignmentOption(const char* keyword, char* buffer, const size_t bufferSize) {
+		// returns 1 when argument was processed (keyword detected, value copied into path var)
+		int CheckAssignmentOption(const char* keyword, std::filesystem::path & path) {
 			if (strcmp(keyword, opt)) return 0;		// detect "keyword" (return 0 if not)
 			if (*val) {
-				if (NULL != buffer) STRCPY(buffer, bufferSize, val);
+				path = val;
 			} else {
 				Error("no parameters found in", arg, ALL);
 			}
@@ -494,7 +487,7 @@ namespace Options {
 					IsLR35902 = false;
 					syx.IsNextEnabled = 0;
 				} else if ((!doubleDash && 'h' == opt[0] && !val[0]) || (doubleDash && !strcmp(opt, "help"))) {
-					ShowHelp |= strcmp("warnings", val);
+					ShowHelp |= !!strcmp("warnings", val);
 					ShowHelpWarnings |= !strcmp("warnings", val);
 				} else if (doubleDash && !strcmp(opt, "version")) {
 					ShowVersion = true;
@@ -503,10 +496,8 @@ namespace Options {
 					if (val[0]) SortSymbols = !strcmp("sort", val);
 				} else if (!strcmp(opt, "longptr")) {
 					IsLongPtr = true;
-				} else if (CheckAssignmentOption("msg", NULL, 0)) {
-					if (!*val) {
-						// nothing to do, CheckAssignmentOption already displayed error
-					} else if (!strcmp("none", val)) {
+				} else if (!strcmp(opt, "msg")) {
+					if (!strcmp("none", val)) {
 						OutputVerbosity = OV_NONE;
 						HideLogo = true;
 					} else if (!strcmp("err", val)) {
@@ -532,15 +523,23 @@ namespace Options {
 				} else if (!strcmp(opt, "sld") && !val[0]) {
 					IsDefaultSldName = true;
 				} else if (
-					CheckAssignmentOption("outprefix", OutPrefix, LINEMAX) ||
-					CheckAssignmentOption("sym", SymbolListFName, LINEMAX) ||
-					CheckAssignmentOption("lst", ListingFName, LINEMAX) ||
-					CheckAssignmentOption("exp", ExportFName, LINEMAX) ||
-					CheckAssignmentOption("sld", SourceLevelDebugFName, LINEMAX) ||
-					CheckAssignmentOption("raw", RAWFName, LINEMAX) ) {
+					CheckAssignmentOption("outprefix", OutPrefix) ||
+					CheckAssignmentOption("sym", SymbolListFName) ||
+					CheckAssignmentOption("lst", ListingFName) ||
+					CheckAssignmentOption("exp", ExportFName) ||
+					CheckAssignmentOption("sld", SourceLevelDebugFName) ||
+					CheckAssignmentOption("raw", RAWFName) ) {
 					// was proccessed inside CheckAssignmentOption function
 				} else if (!strcmp(opt, "fullpath")) {
-					IsShowFullPath = 1;
+					if (!strcmp("on", val)) {
+						FileVerbosity = FNAME_ABSOLUTE;
+					} else if (!val[0] || !strcmp("rel", val)) {
+						FileVerbosity = FNAME_LAUNCH_REL;
+					} else if (!strcmp("off", val)) {
+						FileVerbosity = FNAME_BASE;
+					} else {
+						Error("invalid --fullpath setting (use: on|rel|off)", val, ALL);
+					}
 				} else if (!strcmp(opt, "color")) {
 					if (!strcmp("on", val)) {
 						SetTerminalColors(true);
@@ -559,13 +558,16 @@ namespace Options {
 							(!doubleDash && 'i' == opt[0]) ||
 							(!doubleDash && 'I' == opt[0])) {
 					if (*val) {
-						IncludeDirsList = new CStringsList(val, IncludeDirsList);
+						IncludeDirsList.emplace_back(val);
 					} else {
 						if (!doubleDash || '=' == arg[5]) {
-							Error("no include path found in", arg, ALL);
-						} else {	// individual `--inc` without "=path" will RESET include dirs
-							if (IncludeDirsList) delete IncludeDirsList;
-							IncludeDirsList = nullptr;
+							if (argv[i+1] && '-' != argv[i+1][0]) {		// include path provided as next argument (after space, like gcc)
+								IncludeDirsList.emplace_back(argv[++i]);
+							} else {
+								Error("no include path found for", arg, ALL);
+							}
+						} else {	// individual `--inc` without "= path" will RESET include dirs
+							IncludeDirsList.clear();
 						}
 					}
 				} else if (!strcmp(opt, "define")) {	// for --define name=value the next argv is used (if available)
@@ -591,6 +593,15 @@ namespace Options {
 
 				++i;					// next CLI argument
 			} // end of while ((arg=argv[i]) && ('-' == arg[0]))
+		}
+
+		void checkIncludePaths(const std::vector<std::filesystem::path> & includes) {
+			for (auto it = includes.crbegin(); it != includes.crend(); ++it) {
+				if (std::filesystem::is_directory(*it)) continue;
+				const char* errtxt = '~' == it->string()[0] ? "include path starts with ~ (check docs)" : "include path not found";
+				Error(errtxt, it->string().c_str(), ALL);
+			}
+			return;
 		}
 	};
 
@@ -631,8 +642,6 @@ namespace Options {
 
 // == end of UnitTest++ part ====================================================================
 
-static char launch_directory[MAX_PATH];
-
 #ifdef WIN32
 int main(int argc, char* argv[]) {
 #else
@@ -645,7 +654,7 @@ int main(int argc, char **argv) {
 	sourcePosStack.reserve(32);
 	smartSmcLines.reserve(64);
 	sourceFiles.reserve(32);
-	archivedFileNames.reserve(64);
+	Options::IncludeDirsList.reserve(32);
 
 	CHECK_UNIT_TESTS		// UnitTest++ extra handling in specially built executable
 
@@ -656,10 +665,7 @@ int main(int argc, char **argv) {
 	// start counter
 	long dwStart = GetTickCount();
 
-	// get current directory
-	SJ_GetCurrentDirectory(MAX_PATH, launch_directory);
-	CurrentDirectory = launch_directory;
-
+	LaunchDirectory = std::filesystem::current_path();	// get CWD as launch directory
 	Options::COptionsParser optParser;
 	char* envFlags = std::getenv("SJASMPLUSOPTS");
 	if (nullptr != envFlags) {
@@ -686,7 +692,7 @@ int main(int argc, char **argv) {
 	// setup __DATE__ and __TIME__ macros (setup them just once, not every pass!)
 	auto now = std::chrono::system_clock::now();
 	std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-	std::tm now_tm = *std::localtime(&now_c);	// lgtm [cpp/potentially-dangerous-function]
+	std::tm now_tm = *std::localtime(&now_c);
 	char dateBuffer[32] = {}, timeBuffer[32] = {};
 	SPRINTF3(dateBuffer, 30, "\"%04d-%02d-%02d\"", now_tm.tm_year + 1900, now_tm.tm_mon + 1, now_tm.tm_mday);
 	SPRINTF3(timeBuffer, 30, "\"%02d:%02d:%02d\"", now_tm.tm_hour, now_tm.tm_min, now_tm.tm_sec);
@@ -703,13 +709,13 @@ int main(int argc, char **argv) {
 	}
 	// warn about BE-host only when there's any CLI argument && after CLI options were parsed
 	if (2 <= argc && Options::IsBigEndian) WarningById(W_BE_HOST, nullptr, W_EARLY);
-	if (Options::IsDefaultListingName && Options::ListingFName[0]) {
+	if (Options::IsDefaultListingName && Options::ListingFName.has_filename()) {
 		Error("Using both  --lst  and  --lst=<filename>  is not possible.", NULL, FATAL);
 	}
-	if (OV_LST == Options::OutputVerbosity && (Options::IsDefaultListingName || Options::ListingFName[0])) {
+	if (OV_LST == Options::OutputVerbosity && (Options::IsDefaultListingName || Options::ListingFName.has_filename())) {
 		Error("Using  --msg=lst[lab]  and other list options is not possible.", NULL, FATAL);
 	}
-	if (Options::IsDefaultSldName && Options::SourceLevelDebugFName[0]) {
+	if (Options::IsDefaultSldName && Options::SourceLevelDebugFName.has_filename()) {
 		Error("Using both  --sld  and  --sld=<filename>  is not possible.", NULL, FATAL);
 	}
 	Options::systemSyntax = Options::syx;		// create copy of initial system settings of syntax
@@ -724,9 +730,12 @@ int main(int argc, char **argv) {
 		_CERR logo _ENDL;
 	}
 
-	if (!Options::IsShowFullPath && (Options::IsDefaultSldName || Options::SourceLevelDebugFName[0])) {
+	if ((Options::FNAME_BASE == Options::FileVerbosity) &&
+		(Options::IsDefaultSldName || Options::SourceLevelDebugFName.has_filename())) {
 		Warning("missing  --fullpath  with  --sld  may produce incomplete file paths.", NULL, W_EARLY);
 	}
+
+	optParser.checkIncludePaths(Options::IncludeDirsList);
 
 	if (Options::ShowVersion) {
 		if (Options::HideLogo) {	// if "sjasmplus --version --nologo", emit only the raw VERSION
@@ -744,7 +753,7 @@ int main(int argc, char **argv) {
 	}
 
 	// create default output name, if not specified
-	ConstructDefaultFilename(Options::DestinationFName, LINEMAX, ".out");
+	ConstructDefaultFilename(Options::DestinationFName, "out");
 	int base_encoding = ConvertEncoding;
 
 	// init some vars
@@ -761,10 +770,17 @@ int main(int argc, char **argv) {
 		InitPass();
 		if (pass == LASTPASS) OpenDest();
 
+		static bool warn_stdin_default_lst = true;
 		for (SSource & src : sourceFiles) {
+			if (src.stdin_log && warn_stdin_default_lst && 1 == pass && Options::IsDefaultListingName) {
+				Warning("use explicit --lst=<filename> for <stdin> source", nullptr, W_EARLY);
+				warn_stdin_default_lst = false;
+			}
 			IsRunning = 1;
 			ConvertEncoding = base_encoding;
-			OpenFile(src.fname, false, src.stdin_log);
+			// don't search include paths, but use GetInputFile to get "archived" fullpath_ref_t for c_str() lifetime
+			fullpath_ref_t src_fname = GetInputFile(delim_string_t(src.fname, DT_COUNT));
+			OpenFile(src_fname, src.stdin_log);
 		}
 
 		while (!RepeatStack.empty()) {
@@ -795,36 +811,30 @@ int main(int argc, char **argv) {
 
 	Close();
 
-	if (Options::UnrealLabelListFName[0]) {
+	if (Options::UnrealLabelListFName.has_filename()) {
 		LabelTable.DumpForUnreal();
 	}
 
-	if (Options::CSpectMapFName[0]) {
+	if (Options::CSpectMapFName.has_filename()) {
 		LabelTable.DumpForCSpect();
 	}
 
-	if (Options::SymbolListFName[0]) {
+	if (Options::SymbolListFName.has_filename()) {
 		LabelTable.DumpSymbols();
 	}
 
-	if (Options::OutputVerbosity <= OV_ALL) {
-		_CERR "Errors: " _CMDL ErrorCount _CMDL ", warnings: " _CMDL WarningCount _CMDL ", compiled: " _CMDL CompiledCurrentLine _CMDL " lines" _END;
+	// sync files, release everything
+	cout << flush;
+	FreeRAM();
+	lua_impl_close();
 
+	if (Options::OutputVerbosity <= OV_ALL) {
 		double dwCount;
 		dwCount = GetTickCount() - dwStart;
 		if (dwCount < 0) dwCount = 0;
-		char workTimeTxt[200] = "";
-		SPRINTF1(workTimeTxt, 200, ", work time: %.3f seconds", dwCount / 1000);
-
-		_CERR workTimeTxt _ENDL;
+		fprintf(stderr, "Errors: %d, warnings: %d, compiled: %d lines, work time: %.3f seconds\n",
+				ErrorCount, WarningCount, CompiledCurrentLine, dwCount / 1000);
 	}
-
-	cout << flush;
-
-	// free RAM
-	FreeRAM();
-
-	lua_impl_close();
 
 	return (ErrorCount != 0);
 }

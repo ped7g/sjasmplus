@@ -31,7 +31,18 @@
 
 #ifdef USE_LUA
 
-#include "lua.hpp"
+#ifdef USE_LUA_SO_LIB
+	// OS Lua is most likely built as C, so fallback to lua.hpp include and treat it as C library
+	#include "lua.hpp"
+#else
+	// bundled Lua is built as C++ library to avoid memory leaks from longjmp usage in C Lua
+	// breaking destructor calls on C++ object instances
+	// see https://github.com/vinniefalco/LuaBridge/issues/323 for one example
+	#include "lauxlib.h"
+	#include "lua.h"
+	#include "lualib.h"
+#endif
+
 #include "LuaBridge/LuaBridge.h"
 
 static lua_State *LUA = nullptr;
@@ -50,6 +61,7 @@ rawset(sj,"warning",function(m,v)sj.warning_i(m or "no message",v)end)
 rawset(sj,"insert_define",function(n,v)return sj.insert_define_i(n,v)end)
 rawset(sj,"exit",function(e)return sj.exit_i(e or 1)end)
 rawset(sj,"set_device",function(i,t)return sj.set_device_i(i or "NONE",t or 0)end)
+rawset(sj,"get_page_at",function(a)return sj.get_page_at_i(a or sj.current_address)end)
 rawset(zx,"trdimage_create",function(n,l)return zx.trdimage_create_i(n,l)end)
 rawset(zx,"trdimage_add_file",function(t,f,s,l,a,r)return zx.trdimage_add_file_i(t,f,s,l,a or -1,r or false)end)
 )BINDING_LUA";
@@ -63,7 +75,7 @@ static std::vector<TextFilePos> scripts_origin;
 static char internal_script_name[LINEMAX];
 
 static const char* lua_impl_get_script_name(const TextFilePos & srcPos) {
-	sprintf(internal_script_name, "script %u", uint32_t(scripts_origin.size()));
+	SPRINTF1(internal_script_name, LINEMAX, "script %u", uint32_t(scripts_origin.size()));
 	scripts_origin.push_back(srcPos);
 	return internal_script_name;
 }
@@ -97,7 +109,8 @@ static int addLuaSourcePositions() {
 		if (isInlinedScript(levelErrorPos, ar.short_src)) {
 			levelErrorPos.line += ar.currentline;
 		} else {
-			levelErrorPos.newFile(ArchiveFilename(ar.short_src));
+			fullpath_ref_t archivedFname = GetInputFile(delim_string_t(ar.short_src, DT_COUNT));
+			levelErrorPos.newFile(archivedFname.str.c_str());
 			levelErrorPos.line = ar.currentline;
 		}
 		luaPosTemp.push_back(levelErrorPos);
@@ -132,8 +145,8 @@ static TextFilePos lua_impl_splitLuaErrorMessage(const char*& LuaError) {
 		luaErrorPos.line += lineNumber;
 	} else {
 		// standalone script, use file name and line number as is (if provided by lua error)
-		STRNCPY(internal_script_name, LINEMAX, LuaError, colonPos - LuaError);
-		luaErrorPos.newFile(ArchiveFilename(internal_script_name));
+		fullpath_ref_t archFname = GetInputFile(delim_string_t(std::string(LuaError, colonPos), DT_COUNT));
+		luaErrorPos.newFile(archFname.str.c_str());
 		luaErrorPos.line = lineNumber;
 	}
 
@@ -261,10 +274,10 @@ static int lua_sj_get_label(const char *name) {
 
 static bool lua_sj_insert_label(const char *name, int address) {
 	int positionsAdded = addLuaSourcePositions();	// add known script positions to sourcePosStack vector
-	std::unique_ptr<char[]> fullName(ValidateLabel(name, false, false));
+	std::unique_ptr<char[]> fullName(ValidateLabel(name, true, false));
 	removeLuaSourcePositions(positionsAdded);
 	if (nullptr == fullName.get()) return false;
-	return LabelTable.Insert(name, address);
+	return LabelTable.Insert(fullName.get(), address);
 }
 
 static void lua_sj_shellexec(const char *command) {
@@ -295,6 +308,14 @@ static bool lua_sj_set_slot(aint n) {
 			Error(buf);
 		}
 	}
+	removeLuaSourcePositions(positionsAdded);
+	return result;
+}
+
+static int32_t lua_sj_get_page_at(int32_t addr) {
+	int positionsAdded = addLuaSourcePositions();	// add known script positions to sourcePosStack vector
+	if (!DeviceID) Warning("sj.get_page_at: only allowed in real device emulation mode (See DEVICE)");
+	int32_t result = DeviceID ? Device->GetPageOfA16(addr) : -1;
 	removeLuaSourcePositions(positionsAdded);
 	return result;
 }
@@ -338,13 +359,17 @@ static unsigned int lua_sj_get_word(unsigned int address) {
 	return result;
 }
 
+static const char* lua_sj_get_modules(void) {
+	return ModuleName;
+}
+
 static bool lua_zx_trdimage_create(const char* trdname, const char* label = nullptr) {
 	// setup label to truncated 8 char array padded with spaces
 	char l8[9] = "        ";
 	char* l8_ptr = l8;
 	while (label && *label && (l8_ptr - l8) < 8) *l8_ptr++ = *label++;
 	int positionsAdded = addLuaSourcePositions();	// add known script positions to sourcePosStack vector
-	bool result = TRD_SaveEmpty(trdname, l8);
+	bool result = TRD_SaveEmpty(trdname ? trdname : "", l8);
 	removeLuaSourcePositions(positionsAdded);
 	return result;
 }
@@ -358,9 +383,13 @@ bool lua_zx_trdimage_add_file(const char* trd, const char* file, int start, int 
 
 static bool lua_zx_save_snapshot_sna(const char* fname, word start) {
 	int positionsAdded = addLuaSourcePositions();	// add known script positions to sourcePosStack vector
-	bool result = SaveSNA_ZX(fname, start);
+	bool result = SaveSNA_ZX(fname ? fname : "", start);
 	removeLuaSourcePositions(positionsAdded);
 	return result;
+}
+
+static aint lua_get_current_address() {
+	return CurAddress;
 }
 
 static void lua_impl_init() {
@@ -384,15 +413,17 @@ static void lua_impl_init() {
 		.addFunction("_pl", lua_sj_parse_line)
 		.addFunction("_pc", lua_sj_parse_code)
 		.beginNamespace("sj")
-			.addProperty("current_address", &CurAddress, false)	// read-only
+			.addProperty("current_address", lua_get_current_address, dirOrgOnlyAddr)
 			.addProperty("warning_count", &WarningCount, false)	// read-only
 			.addProperty("error_count", &ErrorCount, false)	// read-only
+			.addProperty("pass", &pass, false)	// read-only
 			// internal functions which are lua-wrapped to enable optional arguments
 			.addFunction("error_i", lua_sj_error)
 			.addFunction("warning_i", lua_sj_warning)
 			.addFunction("insert_define_i", lua_sj_insert_define)
 			.addFunction("exit_i", ExitASM)
 			.addFunction("set_device_i", lua_sj_set_device)
+			.addFunction("get_page_at_i", lua_sj_get_page_at)
 			// remaining public functions with all arguments mandatory (boolean args seems to default to false?)
 			.addFunction("get_define", lua_sj_get_define)
 			.addFunction("get_label", lua_sj_get_label)
@@ -406,10 +437,11 @@ static void lua_impl_init() {
 			.addFunction("get_byte", lua_sj_get_byte)
 			.addFunction("get_word", lua_sj_get_word)
 			.addFunction("get_device", GetDeviceName)		// no error/warning, can be called directly
+			.addFunction("get_modules", lua_sj_get_modules)
 			.addFunction("set_page", lua_sj_set_page)
 			.addFunction("set_slot", lua_sj_set_slot)
 			// MMU API will be not added, it is too dynamic, and _pc("MMU ...") works
-			.addFunction("file_exists", FileExists)
+			.addFunction("file_exists", FileExistsCstr)
 		.endNamespace()
 		.beginNamespace("zx")
 			.addFunction("trdimage_create_i", lua_zx_trdimage_create)
@@ -521,20 +553,17 @@ void dirINCLUDELUA() {
 		SkipToEol(lp);		// skip till EOL (colon), to avoid parsing file name
 		return;
 	}
-	std::unique_ptr<char[]> fnaam(GetFileName(lp));
-	EDelimiterType dt = GetDelimiterOfLastFileName();
-	char* fullpath = GetPath(fnaam.get(), NULL, DT_ANGLE == dt);
-	if (!fullpath[0]) {
-		Error("[INCLUDELUA] File doesn't exist", fnaam.get(), EARLY);
+	fullpath_ref_t file_in = GetInputFile(lp);
+	if (!FileExists(file_in.full)) {
+		Error("[INCLUDELUA] File doesn't exist", file_in.str.c_str(), EARLY);
 	} else {
 		extraErrorWarningPrefix = lua_err_prefix;
-		fileNameFull = ArchiveFilename(fullpath);	// get const pointer into archive
-		if (luaL_dofile(LUA, fileNameFull)) {
+		// Use relative-to-launch-dir filename for open to get reasonable source-pos-string in errors
+		if (luaL_dofile(LUA, file_in.full.lexically_proximate(LaunchDirectory).string().c_str())) {
 			lua_impl_showLoadError(EARLY);
 		}
 		extraErrorWarningPrefix = nullptr;
 	}
-	free(fullpath);
 }
 
 #endif //USE_LUA

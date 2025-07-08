@@ -36,6 +36,9 @@ namespace Options {
 	// which lines should made it into listing: all, active (not skipped by IF false), only-if-has-machine-code
 	enum ELstType { LST_T_ALL, LST_T_ACTIVE, LST_T_MC_ONLY };
 
+	// how file names are displayed in errors, listings, SLD, ...: just base name, relative to launch dir, full absolute path
+	enum EFileVerbosity { FNAME_BASE, FNAME_LAUNCH_REL, FNAME_ABSOLUTE };
+
 	typedef struct STerminalColorSequences {
 		const char * end, * display, * warning, * error, * bold;
 	} STerminalColorSequences;
@@ -73,22 +76,22 @@ namespace Options {
 	} SSyntax;
 
 	extern const STerminalColorSequences* tcols;
-	extern char OutPrefix[LINEMAX];
-	extern char SymbolListFName[LINEMAX];
-	extern char ListingFName[LINEMAX];
-	extern char ExportFName[LINEMAX];
-	extern char DestinationFName[LINEMAX];
-	extern char RAWFName[LINEMAX];
-	extern char UnrealLabelListFName[LINEMAX];
-	extern char CSpectMapFName[LINEMAX];
+	extern std::filesystem::path OutPrefix;
+	extern std::filesystem::path SymbolListFName;
+	extern std::filesystem::path ListingFName;
+	extern std::filesystem::path ExportFName;
+	extern std::filesystem::path DestinationFName;
+	extern std::filesystem::path RAWFName;
+	extern std::filesystem::path UnrealLabelListFName;
+	extern std::filesystem::path CSpectMapFName;
 	extern int CSpectMapPageSize;
-	extern char SourceLevelDebugFName[LINEMAX];
+	extern std::filesystem::path SourceLevelDebugFName;
 	extern bool IsDefaultSldName;
 
 	extern EOutputVerbosity OutputVerbosity;
 	extern bool IsLabelTableInListing;
 	extern bool IsDefaultListingName;
-	extern bool IsShowFullPath;
+	extern EFileVerbosity FileVerbosity;
 	extern bool AddLabelListing;
 	extern bool NoDestinationFile;
 	extern SSyntax syx;
@@ -102,7 +105,7 @@ namespace Options {
 	// format is then `:ADDR label`, starting from colon, then 16bit address, then label.
 	extern bool EmitVirtualLabels;
 
-	extern CStringsList* IncludeDirsList;
+	extern std::vector<std::filesystem::path> IncludeDirsList;
 	extern CDefineTable CmdDefineTable;
 
 	void SetTerminalColors(bool enabled);
@@ -127,7 +130,7 @@ extern aint deviceDirectivesCount;
 //*current* full file name (used as full for CurSourcePos when `--fullpath`)
 //content at this pointer is immutable and valid till assembler exits, so you can archive/reuse it
 //for example SLD tracing remembers original file where macro was defined by using pointer into this
-extern const char* fileNameFull;
+extern fullpath_p_t fileNameFull;
 
 // extend
 extern char* lp, line[LINEMAX], temp[LINEMAX], * bp;
@@ -164,10 +167,9 @@ extern uint32_t maxlin;
 extern aint CurAddress, CompiledCurrentLine, LastParsedLabelLine, PredefinedCounter;
 extern aint destlen, size, comlin;
 
-extern char* vorlabp, * macrolabp, * LastParsedLabel;
+extern char* macrolabp, * LastParsedLabel;
 
 enum EEncoding { ENCDOS, ENCWIN };
-extern const char* CurrentDirectory;
 
 void ExitASM(int p);
 extern CStringsList* lijstp;

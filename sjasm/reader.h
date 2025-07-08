@@ -28,11 +28,6 @@
 
 #pragma once
 
-#include <array>
-
-enum EDelimiterType { DT_NONE, DT_QUOTES, DT_APOSTROPHE, DT_ANGLE, DT_COUNT };
-enum EBracketType { BT_NONE, BT_ROUND, BT_CURLY, BT_SQUARE, BT_COUNT };
-
 bool White(const char c);
 bool White();
 void SkipParam(char*&);
@@ -77,10 +72,9 @@ int GetBytes(char*& p, int e[], int add, int dc);
 void GetStructText(char*& p, aint len, byte* data, const byte* initData = nullptr);	// initData indicate "{}" is required for multi-value init
 int GetBits(char*& p, int e[]);
 int GetBytesHexaText(char*& p, int e[]);
-int cmphstr(char*& p1, const char* p2, bool allowParenthesisEnd = false);		// p2 must be lowercase to match both cases
-char* GetFileName(char*& p, bool convertslashes=true);
-char* GetOutputFileName(char*& p, bool convertslashes=true);	// prepends the filename with OutPrefix
-EDelimiterType GetDelimiterOfLastFileName();	// DT_NONE if no GetFileName was called
+int cmphstr(char*& p1, const char* p2, bool allowParenthesisEnd = false);   // p2 must be lowercase to match both cases
+delim_string_t GetDelimitedStringEx(char*& p);  // get some string within delimiters (none, quotes, apostrophes, chevron)
+std::string GetDelimitedString(char*& p);       // get some string within delimiters (none, quotes, apostrophes, chevron)
 bool isLabelStart(const char *p, bool modifiersAllowed = true);
 int islabchar(char p);
 EStructureMembers GetStructMemberId(char*& p);

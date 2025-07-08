@@ -28,9 +28,6 @@
 
 // support.h
 
-constexpr char pathBadSlash = '\\';
-constexpr char pathGoodSlash = '/';
-
 constexpr uint16_t sj_bswap16(const uint16_t v) {
 	return ((v>>8)&0xFF) | ((v<<8)&0xFF00);
 }
@@ -61,16 +58,20 @@ static_assert(0x78563412 == sj_bswap32(0x12345678), "internal error in bswap32 i
 
 #endif
 
-#ifndef TCHAR
-#define TCHAR char
-#endif
 #ifndef WIN32
 long GetTickCount();
 #endif
 
-FILE* SJ_fopen(const char* fname, const char* mode);
-void SJ_GetCurrentDirectory(int, char*);
-int SJ_SearchPath(const char* oudzp, const char* filename, const char* /*extension*/, int maxlen, char* nieuwzp, char** ach);
+#if defined (_WIN32) || defined (__CYGWIN__)
+    // convert path to string, replace backslashes and convert it back to new path -> sounds fun!
+    std::filesystem::path SJ_force_slash(const std::filesystem::path path); // windows world pain
+#else
+    // do nothing in POSIX world, the "/" path operator will use only forward slash here
+#   define SJ_force_slash(path) path
+#endif
+
+void SJ_FixSlashes(delim_string_t & str, bool do_warning = true); // convert backslashes, can produce warning
+FILE* SJ_fopen(const std::filesystem::path & fname, const char* mode);
 
 // FILE* dbg_fopen(const char* fname, const char* modes);
 

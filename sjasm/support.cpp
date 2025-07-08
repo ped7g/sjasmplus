@@ -30,76 +30,23 @@
 
 #include "sjdefs.h"
 
-FILE* SJ_fopen(const char* fname, const char* mode) {
-	if (nullptr == fname || nullptr == mode || !*fname) return nullptr;
-	return fopen(fname, mode);
+#if defined (_WIN32) || defined (__CYGWIN__)
+std::filesystem::path SJ_force_slash(const std::filesystem::path path) {
+	delim_string_t pathStr { path.string(), DT_COUNT };
+	SJ_FixSlashes(pathStr, false);
+	return pathStr.first;
+}
+#endif
+
+void SJ_FixSlashes(delim_string_t & str, bool do_warning) {
+	if (std::string::npos == str.first.find('\\')) return;
+	if (do_warning) WarningById(W_BACKSLASH, str.first.c_str());
+	std::replace(str.first.begin(), str.first.end(), '\\', '/');
 }
 
-/*
-FILE* dbg_fopen(const char* fname, const char* modes) {
-	FILE* f = fopen(fname, modes);
-	printf("fopen = %p modes [%s]\tname (%lu) [%s]\n", (void*)f, modes, strlen(fname), fname);
-	return f;
-}
-*/
-
-void SJ_GetCurrentDirectory(int whatever, char* pad) {
-	pad[0] = 0;
-	//TODO implement this one? And decide what to do with it?
-	// Will affect "--fullpath" paths if implemented correctly (as GetCurrentDirectory on windows)
-}
-
-static bool isAnySlash(const char c) {
-	return pathGoodSlash == c || pathBadSlash == c;
-}
-
-/**
- * @brief Check if the path does start with MS windows drive-letter and colon, but accepts
- * only absolute form with slash after colon, otherwise warns about relative way not supported.
- *
- * @param filePath p_filePath: filename to check
- * @return bool true if the filename contains drive-letter with ABSOLUTE path
- */
-static bool isWindowsDrivePathStart(const char* filePath) {
-	if (!filePath || !filePath[0] || ':' != filePath[1]) return false;
-	const char driveLetter = toupper(filePath[0]);
-	if (driveLetter < 'A' || 'Z' < driveLetter) return false;
-	if (!isAnySlash(filePath[2])) {
-		Warning("Relative file path with drive letter detected (not supported)", filePath, W_EARLY);
-		return false;
-	}
-	return true;
-}
-
-int SJ_SearchPath(const char* oudzp, const char* filename, const char*, int maxlen, char* nieuwzp, char** ach) {
-	assert(nieuwzp);
-	*nieuwzp = 0;
-	if (nullptr == filename) return 0;
-	if (isAnySlash(filename[0]) || isWindowsDrivePathStart(filename)) {
-		STRCPY(nieuwzp, maxlen, filename);
-	} else {
-		STRCPY(nieuwzp, maxlen, oudzp);
-		if (*nieuwzp) {
-			char *lastChar = nieuwzp + strlen(nieuwzp) - 1;
-			if (!isAnySlash(*lastChar)) {
-				lastChar[1] = pathGoodSlash;
-				lastChar[2] = 0;
-			}
-		}
-		STRCAT(nieuwzp, maxlen, filename);
-	}
-	if (ach) {
-		char* p = *ach = nieuwzp;
-		while (*p) {
-			if (isAnySlash(*p++)) *ach = p;
-		}
-	}
-	FILE* fp;
-	if (FOPEN_ISOK(fp, nieuwzp, "r")) {
-		fclose(fp);
-		return 1;
-	}
-	return 0;
+FILE* SJ_fopen(const std::filesystem::path & fname, const char* mode) {
+	if (nullptr == mode || fname.empty()) return nullptr;
+	return fopen(fname.string().c_str(), mode);
 }
 
 #ifndef WIN32
@@ -129,6 +76,19 @@ void switchStdOutIntoBinaryMode() {
 #endif
 }
 
+#if defined (_WIN32)
+static bool restoreWinMode = false;
+static HANDLE hWinOut;
+static HANDLE hWinIn;
+static DWORD dwOriginalOutMode = 0, dwOriginalInMode = 0;
+
+void restoreOriginalConsoleMode() {
+	if (!restoreWinMode) return;
+	SetConsoleMode(hWinIn, dwOriginalInMode);
+	SetConsoleMode(hWinOut, dwOriginalOutMode);
+}
+#endif
+
 bool autoColorsDetection() {
 	// existence of NO_COLOR env.var. disables auto-colors: http://no-color.org/
 	const char* envNoColor = std::getenv("NO_COLOR");
@@ -138,15 +98,19 @@ bool autoColorsDetection() {
 	// check if running inside console with isatty
 	if (!_isatty(_fileno(stderr))) return false;	// redirected to file? don't color
 	// Try to set output mode to handle virtual terminal sequences (VT100)
-	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-	HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
-	if (hOut != INVALID_HANDLE_VALUE && hIn != INVALID_HANDLE_VALUE) {
+	hWinOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	hWinIn = GetStdHandle(STD_INPUT_HANDLE);
+	if (hWinOut != INVALID_HANDLE_VALUE && hWinIn != INVALID_HANDLE_VALUE) {
 		DWORD dwOutMode = 0;
 		DWORD dwInMode = 0;
-		if (GetConsoleMode(hOut, &dwOutMode) && GetConsoleMode(hIn, &dwInMode)) {
+		if (GetConsoleMode(hWinOut, &dwOutMode) && GetConsoleMode(hWinIn, &dwInMode)) {
+			dwOriginalInMode = dwInMode;
+			dwOriginalOutMode = dwOutMode;
+			restoreWinMode = true;
+			std::atexit(restoreOriginalConsoleMode);
 			dwOutMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
 			dwInMode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
-			return SetConsoleMode(hOut, dwOutMode) && SetConsoleMode(hIn, dwInMode);
+			return SetConsoleMode(hWinOut, dwOutMode) && SetConsoleMode(hWinIn, dwInMode);
 		}
 	}
 	return false;

@@ -10,10 +10,10 @@ Requirements:
 
 or
 
-- complete MinGW environment for MS Windows, configured with MinGW bin directories added in `PATH` variable (typically `C:\MinGW\bin;` `C:\MinGW\msys\1.0\bin`) or possibly with any BASH emulator (e.g. the one which comes with [git for windows](https://gitforwindows.org/)) will do it instead of msys is missing / not set.
-- CMake installed into MinGW bin directory (optionally)
+- for 32-bit target: [MinGW32](https://winlibs.com) UCRT runtime for MS Windows, configured with MinGW bin directories added in `PATH` variable (typically `C:\mingw32\bin;`), with any BASH emulator (e.g. the one which comes with [git for windows](https://gitforwindows.org/))
+- for 64-bit target: [MinGW64](https://winlibs.com) UCRT runtime for MS Windows, configured with MinGW bin directories added in `PATH` variable (typically `C:\mingw64\bin;`), with any BASH emulator (e.g. the one which comes with [git for windows](https://gitforwindows.org/)) or as an alternative [MSYS2](https://www.msys2.org) environment with GNU Make and GCC installed.
 
-Compilation is tested with GCC 5.5.0, it should run also with older 5.x versions. It will not work with GCC 4.x and older.
+C++17 standard is required, compilation is tested with GCC 14.2.0. It will not work with GCC 10.x and older. C++17 is required since v1.21.0, older versions required C++14 and can be built with GCC 5.x.
 
 ## Getting full source code of sjasmplus
 
@@ -48,46 +48,35 @@ Recently (2022) it seems leo72 started providing AUR for z00m's fork of sjasmplu
 
 ## Default method for MS Windows
 
-Go to folder with sjasmplus project. Edit install path `PREFIX` in file `Makefile.win` according your preferences (default `c:\mingw\usr\local\bin`). Remove `-static` parameter in `CFLAGS` if you don't need standalone Windows executable (binary is MinGW dependant then, but it's smaller). Run following commands:
+Go to folder with sjasmplus project. Edit install path `PREFIX` in file `Makefile.win` according your preferences (default `c:\mingw32\usr\local\bin`). Remove `-static` parameter in `CFLAGS` if you don't need standalone Windows executable (binary is MinGW dependant then, but it's smaller). Run following commands:
 
-	make -f Makefile.win clean
-	make -f Makefile.win
-	make -f Makefile.win install
+	mingw32-make -f Makefile.win clean
+	mingw32-make -f Makefile.win
+	mingw32-make -f Makefile.win install
 
 ## CMAKE method for Linux / Unix / macOS / BSD
 
 Go to folder with sjasmplus project and run following set of commands:
 
-	mkdir build
-	cd build
-	cmake -DCMAKE_BUILD_TYPE=Release ..
-	make
-	make install
+	cmake -DCMAKE_BUILD_TYPE=Release -S . -B build
+	cmake --build build
+	cmake --install build
 
 The project will use internal copy of Lua 5.4.4 by default, but you can use system Lua 5.4 by using `-DSYSTEM_LUA=ON`.
 
 For disabling of LUA scripting support add `-DENABLE_LUA=OFF` option:
 
-	cmake -DENABLE_LUA=OFF ..
+	cmake -DENABLE_LUA=OFF -DCMAKE_BUILD_TYPE=Release -S . -B build
 
 Binary sjasmplus file will be placed in `/usr/bin` by default.
 
 To change install directory prefix add `-DCMAKE_INSTALL_PREFIX:PATH` option with specified prefix:
 
-	cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr/local ..
+	cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr/local -DCMAKE_BUILD_TYPE=Release -S . -B build
 
 ## CMake method for MS Windows
 
-Go to folder with sjasmplus project. Delete or rename file `Makefile`. Rename file `Makefile.win` to `Makefile`. Create `build` subdirectory and enter to it. Run following command:
-
-	cmake-gui
-
-Click `Browse Source...` button, select extracted tarball folder. Click `Browse Build...` button, select the `build` folder. Click `Configure` button, select `MinGW Makefiles`, select `Use default native compilers`. Click `Finish` and wait until configuration is done. Change `CMAKE_INSTALL_PREFIX` install path according your preferences (click on path). Click `Generate`. Run `cmd.exe`, enter the build directory and run following commands:
-
-	make
-	make install	
-
-The CMake can generate also VS project files, and sources should compile with VS compiler, since
+The [CMake](https://cmake.org) can generate VS project files, and sources should compile with VS compiler, since
 v1.14.1 the VS built executable should mostly work as well as MinGW, although there are still
 corner-case bugs which need to be fixed, see issues #77 and #78 for details/progress and to help.
 

@@ -9,6 +9,13 @@ HELP_STRING+="\n  $ \033[96mContinuousIntegration/test_folder_tests.sh z8\033[0m
 PROJECT_DIR=$PWD
 TEST_RUNNER="${PROJECT_DIR}/ContinuousIntegration/test_folder_tests.sh"
 BUILD_DIR="$PROJECT_DIR/build/tests"
+USER_RAMDISK_DIR="/run/user/$(id -u)"
+if [[ ! $NO_RAMDISK && -d "$USER_RAMDISK_DIR" && -w "$USER_RAMDISK_DIR" ]]; then
+    RAMDISK_BUILD_DIR="$USER_RAMDISK_DIR/sjasmplus_build_tests"
+    mkdir -p "$RAMDISK_BUILD_DIR" && \
+    echo "User ramdisk detected at [$RAMDISK_BUILD_DIR], redirecting tests building there" && \
+    BUILD_DIR="$RAMDISK_BUILD_DIR"
+fi
 exitCode=0
 totalTests=0        # +1 per ASM
 totalChecks=0       # +1 per diff/check
@@ -21,10 +28,10 @@ echo -n -e "Project dir \"\033[96m${PROJECT_DIR}\033[0m\". "
 [[ ! -f "${TEST_RUNNER}" ]] && echo -e "\033[91munexpected working directory\033[0m\n$HELP_STRING" && exit 1
 
 # `cmp` on macOS require minus switch to indicate that stdin is going to be processed
-CMP_IN="" && [[ `uname` == 'Darwin' ]] && CMP_IN=" -"
+CMP_IN="" && [[ $(uname) == 'Darwin' ]] && CMP_IN=" -"
 # check if `gcmp` or `cmp` accepts stdin input for second file to compare
-CMP=gcmp && cat "${TEST_RUNNER}" | $CMP $CMP_IN "${TEST_RUNNER}" 2> /dev/null || \
-CMP=cmp && cat "${TEST_RUNNER}" | $CMP $CMP_IN "${TEST_RUNNER}" 2> /dev/null || CMP=""
+CMP="gcmp" && cat "${TEST_RUNNER}" | $CMP $CMP_IN "${TEST_RUNNER}" 2> /dev/null || \
+CMP="cmp" && cat "${TEST_RUNNER}" | $CMP $CMP_IN "${TEST_RUNNER}" 2> /dev/null || CMP=""
 [[ -z $CMP ]] && echo -e "\n\033[91mNo \"cmp\" found which accepts stdin\033[0m (gcmp and cmp tried).\n" && exit 1
 echo -n -e "Using \033[96m${CMP}${CMP_IN}\033[0m. "
 
@@ -60,11 +67,11 @@ mkdir -p "$BUILD_DIR" && chmod 700 "$BUILD_DIR" && cd "$BUILD_DIR" || exit 1
 ## go through all asm files in tests directory and verify results
 for f in "${TEST_FILES[@]}"; do
     ## standalone .asm file was found, try to build it
-    rm -rf *        # clear the temporary build directory
+    rm -rf ./*      # clear the temporary build directory
     totalTests=$((totalTests + 1))
     # set up various "test-name" variables for file operations
-    src_dir=`dirname "$f"`          # source directory (dst_dir is "." = "build/tests")
-    file_asm=`basename "$f"`        # just "file.asm" name
+    src_dir=$(dirname "$f")         # source directory (dst_dir is "." = "build/tests")
+    file_asm=$(basename "$f")       # just "file.asm" name
     src_base="${f%.asm}"            # source directory + base ("src_dir/file"), to add extensions
     dst_base="${file_asm%.asm}"     # local-directory base (just "file" basically), to add extensions
     CLI_FILE="${dst_base}.cli"      # sub-script test-runner (internal feature, not documented)
@@ -89,7 +96,7 @@ for f in "${TEST_FILES[@]}"; do
     options=('--lstlab=sort')	# enforce all symbol dumps to be sorted in any case (even when no --lst)
     options+=('-Wno-behost')	# don't report BE host platform (these kind of tests should pass on any platform)
     options+=('--color=off')	# don't colorize warnings/errors by default
-    [[ -s "${OPTIONS_FILE}" ]] && options+=(`cat "${OPTIONS_FILE}"`)
+    [[ -s "${OPTIONS_FILE}" ]] && options+=($(cat "${OPTIONS_FILE}"))
     # check if .lst file is required to verify the test, set up options to produce one
     [[ -s "${LIST_FILE}" ]] && MSG_LIST_FILE="" && options+=("--lst=${dst_base}.lst")
     [[ ! -s "${MSG_LIST_FILE}" ]] && MSG_LIST_FILE="" || LIST_FILE="${MSG_LIST_FILE}"
@@ -104,13 +111,13 @@ for f in "${TEST_FILES[@]}"; do
         last_result_origin="custom test script '${CLI_FILE}'"
         ok_tick_text="run"
     else
-        echo -e "\033[95mAssembling\033[0m \"\033[96m${file_asm}\033[0m\" in \"\033[96m${src_dir##$PROJECT_DIR/}\033[0m\", options [\033[96m${options[@]}\033[0m]"
+        echo -e "\033[95mAssembling\033[0m \"\033[96m${file_asm}\033[0m\" in \"\033[96m${src_dir##$PROJECT_DIR/}\033[0m\", options [\033[96m${options[*]}\033[0m]"
         if [[ -z "${MSG_LIST_FILE}" ]]; then
-            $MEMCHECK "$EXE" --nologo --msg=none --fullpath "${options[@]}" "$file_asm"
+            LANG=C $MEMCHECK "$EXE" --nologo --msg=none --fullpath "${options[@]}" "$file_asm"
             last_result=$?
             [[ -s "${LIST_FILE}" ]] && ok_tick_text="lst" || ok_tick_text="asm"
         else
-            $MEMCHECK "$EXE" --nologo --msg=lstlab --fullpath "${options[@]}" "$file_asm" 2> "${dst_base}.lst"
+            LANG=C $MEMCHECK "$EXE" --nologo --msg=lstlab --fullpath "${options[@]}" "$file_asm" 2> "${dst_base}.lst"
             last_result=$?
             ok_tick_text="msg"
         fi
@@ -130,8 +137,8 @@ for f in "${TEST_FILES[@]}"; do
     else
         echo -n -e "  \\  \033[92m$ok_tick_text OK\033[0m "
     fi
-    # check binary results, if TAP, CDT, BIN, RAW or TRD are present in source directory
-    for binext in {'tap','cdt','bin','raw','trd'}; do
+    # check binary results, if TAP, CDT, CPR, BIN, RAW or TRD are present in source directory
+    for binext in {'tap','cdt','cpr','bin','raw','trd'}; do
         if [[ -f "${CFG_BASE}.${binext}" ]]; then
             totalChecks=$((totalChecks + 1))        # +1 for each binary check
             ! $CMP "${CFG_BASE}.${binext}" "${dst_base}.${binext}" \

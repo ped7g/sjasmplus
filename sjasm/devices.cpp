@@ -54,6 +54,15 @@ bool IsAmstradCPCDevice(const char* name) {
 	return true;
 }
 
+bool IsAmstradPLUSDevice(const char* name) {
+	if (nullptr == name) return false;
+	if (strcmp(name, "AMSTRADCPCPLUS"))
+	{
+		return false;
+	}
+	return true;
+}
+
 static void initRegularSlotDevice(CDevice* const device, const int32_t slotSize, const int32_t slotCount,
 								  const int pageCount, const int* const initialPages) {
 	for (int32_t slotAddress = 0; slotAddress < slotSize * slotCount; slotAddress += slotSize) {
@@ -181,6 +190,13 @@ static void DeviceAmstradCPC6128(CDevice** dev, CDevice* parent, aint ramtop) {
 	initRegularSlotDevice(*dev, 0x4000, 4, 8, initialPages);
 }
 
+static void DeviceAmstradCPCPLUS(CDevice** dev, CDevice* parent, aint ramtop) {
+	if (ramtop) WarningById(W_NO_RAMTOP);
+	*dev = new CDevice("AMSTRADCPCPLUS", parent);
+	const int initialPages[] = { 0, 1, 2, 3 };
+	initRegularSlotDevice(*dev, 0x4000, 4, 32, initialPages);	// 32*16kiB = 512MiB (maximum cartridge size)
+}
+
 static bool SetUserDefinedDevice(const char* id, CDevice** dev, CDevice* parent, aint ramtop) {
 	auto findIt = std::find_if(
 		DefDevices.begin(), DefDevices.end(),
@@ -240,6 +256,8 @@ bool SetDevice(const char *const_id, const aint ramtop) {
 				DeviceAmstradCPC464(dev, parent, ramtop);
 			} else if (cmphstr(id, "amstradcpc6128")) {
 				DeviceAmstradCPC6128(dev, parent, ramtop);
+			} else if (cmphstr(id, "amstradcpcplus")) {
+				DeviceAmstradCPCPLUS(dev, parent, ramtop);
 			} else if (!SetUserDefinedDevice(id, dev, parent, ramtop)) {
 				return false;
 			}
@@ -404,6 +422,10 @@ void CDevice::CheckPage(const ECheckPageLevel level) {
 					ErrorInt("No more memory pages to map next one into slot", previousSlotI, SUPPRESS);
 					// disable the option on the overflowing slot
 					prevS->Option = CDeviceSlot::O_NONE;
+					// reset error reporting even when level is CHECK_NO_EMIT, one error is enough
+					limitExceeded = false;
+					previousSlotI = i;
+					previousSlotOpt = S->Option;
 					break;		// continue into next slot, don't wrap any more
 				}
 				if (realAddr != (prevS->Address + prevS->Size)) {	// should be equal
@@ -425,10 +447,12 @@ void CDevice::CheckPage(const ECheckPageLevel level) {
 				}
 				break;
 		}
-		// refresh check slot settings
-		limitExceeded &= (previousSlotI == i);	// reset limit flag if slot changed (in non check_reset mode)
-		previousSlotI = i;
-		previousSlotOpt = S->Option;
+		// refresh check slot settings (only in CHECK_EMIT case, otherwise ParseLine will reset it with CHECK_NO_EMIT at BoL!)
+		if (CHECK_EMIT == level) {
+			limitExceeded &= (previousSlotI == i);	// reset limit flag if slot changed (in non check_reset mode)
+			previousSlotI = i;
+			previousSlotOpt = S->Option;
+		}
 		return;
 	}
 	Error("CheckPage(..): please, contact the author of this program.", nullptr, FATAL);

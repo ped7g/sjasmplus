@@ -20,13 +20,16 @@
     ENDLUA
 
     LUA         ; check read-only property of the directly mapped values
-        sj.current_address = 1
+        -- writeable since v1.21.1: sj.current_address = 1
     ENDLUA
     LUA
         sj.error_count = 2
     ENDLUA
     LUA
         sj.warning_count = 3
+    ENDLUA
+    LUA
+        sj.pass = 4
     ENDLUA
 
 

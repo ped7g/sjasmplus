@@ -297,7 +297,7 @@ char* getinstr(char*& p) {
 int check8(aint val) {
 	if (val < -256 || val > 255) {
 		char buffer[64];
-		sprintf(buffer, "value 0x%X is truncated to 8bit value: 0x%02X", val, val&0xFF);
+		SPRINTF2(buffer, 64, "value 0x%X is truncated to 8bit value: 0x%02X", val, val&0xFF);
 		Warning(buffer);
 		return 0;
 	}
@@ -308,7 +308,7 @@ int check8o(aint val)
 {
 	if (val < -128 || val > 127) {
 		char buffer[32];
-		sprintf(buffer,"Offset out of range (%+i)", val);
+		SPRINTF1(buffer, 32, "Offset out of range (%+i)", val);
 		Error(buffer, nullptr, IF_FIRST);
 		return 0;
 	}
@@ -318,7 +318,7 @@ int check8o(aint val)
 int check16(aint val) {
 	if (val < -65536 || val > 65535) {
 		char buffer[64];
-		sprintf(buffer, "value 0x%X is truncated to 16bit value: 0x%04X", val, val&0xFFFF);
+		SPRINTF2(buffer, 64, "value 0x%X is truncated to 16bit value: 0x%04X", val, val&0xFFFF);
 		Warning(buffer);
 		return 0;
 	}
@@ -328,7 +328,7 @@ int check16(aint val) {
 int check16u(aint val) {
 	if (val < 0 || val > 65535) {
 		char buffer[64];
-		sprintf(buffer, "value 0x%X is truncated to 16bit value: 0x%04X", val, val&0xFFFF);
+		SPRINTF2(buffer, 64, "value 0x%X is truncated to 16bit value: 0x%04X", val, val&0xFFFF);
 		Warning(buffer);
 		return 0;
 	}
@@ -338,7 +338,7 @@ int check16u(aint val) {
 int check24(aint val) {
 	if (val < -16777216 || val > 16777215) {
 		char buffer[64];
-		sprintf(buffer, "value 0x%X is truncated to 24bit value: 0x%06X", val, val&0xFFFFFF);
+		SPRINTF2(buffer, 64, "value 0x%X is truncated to 24bit value: 0x%06X", val, val&0xFFFFFF);
 		Warning(buffer);
 		return 0;
 	}
@@ -644,39 +644,12 @@ int GetCharConst(char*& p, aint& val) {
 	} else if (4 < bytes) {
 		const char oldCh = *p;
 		*p = 0;						// shorten the string literal for warning display
-		sprintf(buffer, "String literal truncated to 0x%X", val);
+		SPRINTF1(buffer, 128, "String literal truncated to 0x%X", val);
 		Warning(buffer, op);
 		*p = oldCh;					// restore it
 	}
 	return 1;
 }
-
-// returns (adjusts also "p" and "ei", and fills "e"):
-//  -2 = buffer full
-//  -1 = syntax error (missing quote/apostrophe)
-//   0 = no string literal detected at p[0]
-//   1 = string literal in single quotes (apostrophe)
-//   2 = string literal in double quotes (")
-template <class strT> int GetCharConstAsString(char* & p, strT e[], int & ei, int max_ei, int add) {
-	if ('"' != *p && '\'' != *p) return 0;
-	const char* const elementP = p;
-	const bool quotes = ('"' == *p++);
-	aint val;
-	while (ei < max_ei && (quotes ? GetCharConstInDoubleQuotes(p, val) : GetCharConstInApostrophes(p, val))) {
-		e[ei++] = (val + add) & 255;
-	}
-	if ((quotes ? '"' : '\'') != *p) {	// too many/invalid arguments or zero-terminator can lead to this
-		if (*p) return -2;				// too many arguments
-		Error("Syntax error", elementP, SUPPRESS);	// zero-terminator
-		return -1;
-	}
-	++p;
-	return 1 + quotes;
-}
-
-// make sure both specialized instances for `char` and `int` are available for whole app
-template int GetCharConstAsString<char>(char* & p, char e[], int & ei, int max_ei, int add);
-template int GetCharConstAsString<int>(char* & p, int e[], int & ei, int max_ei, int add);
 
 int GetBytes(char*& p, int e[], int add, int dc) {
 	aint val;
@@ -864,59 +837,28 @@ int GetBytesHexaText(char*& p, int e[]) {
 	return bytes;
 }
 
-static EDelimiterType delimiterOfLastFileName = DT_NONE;
-
-static char* GetFileName(char*& p, const char* pathPrefix, bool convertslashes) {
-	bool slashConverted = false;
-	char* newFn = new char[LINEMAX+1], * result = newFn;
-	if (NULL == newFn) ErrorOOM();
-	// prepend the filename with path-prefix, if some was requested
-	if (pathPrefix) {
-		while (*pathPrefix) {
-			*newFn = *pathPrefix;
-			if (convertslashes && pathBadSlash == *newFn) *newFn = pathGoodSlash;
-			++newFn, ++pathPrefix;
-			if (LINEMAX <= newFn-result) Error("Filename too long!", NULL, FATAL);
-		}
-	}
-	// check if some and which delimiter is used for this filename (does advance over white chars)
-	// and remember type of detected delimiter (for GetDelimiterOfLastFileName function)
-	delimiterOfLastFileName = DelimiterAnyBegins(p);
-	const char deliE = delimiters_e[delimiterOfLastFileName];	// expected ending delimiter
-	// copy all characters until zero or delimiter-end character is reached
-	while (*p && deliE != *p) {
-		*newFn = *p;		// copy character
-		if (convertslashes && pathBadSlash == *newFn) slashConverted = (*newFn = pathGoodSlash);
-		++newFn, ++p;
-		if (LINEMAX <= newFn-result) Error("Filename too long!", NULL, FATAL);
-	}
-	*newFn = 0;				// add string terminator at end of file name
-	// verify + skip end-delimiter (if other than space)
+delim_string_t GetDelimitedStringEx(char*& p) {
+	delim_string_t result;
+	result.second = DelimiterAnyBegins(p);
+	const char deliE = delimiters_e[result.second];
+	char *p_begin = p;
+	while (*p && deliE != *p) ++p;
+	result.first.assign(p_begin, p);
 	if (' ' != deliE) {
 		if (deliE == *p) {
 			++p;
 		} else {
 			const char delimiterTxt[2] = { deliE, 0 };
 			Error("No closing delimiter", delimiterTxt, SUPPRESS);
-			result[0] = 0;	// return "empty" string filename
+			result.first = "";		// return "empty" string
 		}
 	}
-	SkipBlanks(p);			// skip blanks any way
-	if (slashConverted) WarningById(W_BACKSLASH, bp);
+	SkipBlanks(p);					// skip blanks any way
 	return result;
 }
 
-char* GetOutputFileName(char*& p, bool convertslashes) {
-	return GetFileName(p, Options::OutPrefix, convertslashes);
-}
-
-char* GetFileName(char*& p, bool convertslashes) {
-	return GetFileName(p, nullptr, convertslashes);
-}
-
-EDelimiterType GetDelimiterOfLastFileName() {
-	// DT_NONE if no GetFileName was called
-	return delimiterOfLastFileName;
+std::string GetDelimitedString(char*& p) {
+	return GetDelimitedStringEx(p).first;	// throw away delimiter type and return just string
 }
 
 bool isLabelStart(const char *p, bool modifiersAllowed) {
@@ -1084,5 +1026,42 @@ EDelimiterType DelimiterBegins(char*& src, const std::array<EDelimiterType, 3> d
 EDelimiterType DelimiterAnyBegins(char*& src, bool advanceSrc) {
 	return DelimiterBegins(src, delimiters_all, advanceSrc);
 }
+
+// returns (adjusts also "p" and "ei", and fills "e"):
+//  -2 = buffer full
+//  -1 = syntax error (missing quote/apostrophe)
+//   0 = no string literal detected at p[0]
+//   1 = string literal in single quotes (apostrophe)
+//   2 = string literal in double quotes (")
+template <class strT> int GetCharConstAsString(char* & p, strT e[], int & ei, int max_ei, int add) {
+	if ('"' != *p && '\'' != *p) return 0;
+	const char* const elementP = p;
+	const bool quotes = ('"' == *p++);
+	aint val;
+	while (ei < max_ei && (quotes ? GetCharConstInDoubleQuotes(p, val) : GetCharConstInApostrophes(p, val))) {
+		e[ei++] = (val + add) & 255;
+	}
+	if ((quotes ? '"' : '\'') != *p) {	// too many/invalid arguments or zero-terminator can lead to this
+		if (*p) return -2;				// too many arguments
+		Error("Syntax error", elementP, SUPPRESS);	// zero-terminator
+		return -1;
+	}
+	++p;
+	if ('Z' == *p) {
+		if (max_ei <= ei) return -2;	// no space for zero byte (keep p pointing at Z to report error)
+		++p;
+		e[ei++] = 0;
+	} else if ('C' == *p) {
+		++p;
+		if (0 == ei) return -1;			// empty string can't have last char patched
+		e[ei - 1] |= 0x80;
+	}
+	return 1 + quotes;
+}
+
+// make sure both specialized instances for `char` and `int` are available for whole app
+// moved to end of file as it seems to derail test coverage data (either this, or the template code)
+template int GetCharConstAsString<char>(char* & p, char e[], int & ei, int max_ei, int add);
+template int GetCharConstAsString<int>(char* & p, int e[], int & ei, int max_ei, int add);
 
 //eof reader.cpp

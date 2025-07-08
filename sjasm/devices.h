@@ -28,6 +28,7 @@
 
 bool IsZXSpectrumDevice(const char *name);
 bool IsAmstradCPCDevice(const char* name);
+bool IsAmstradPLUSDevice(const char* name);
 bool SetDevice(const char *const_id, const aint ramtop = 0);
 const char* GetDeviceName();
 
@@ -56,7 +57,6 @@ private:
 
 class CDeviceDef {
 public:
-
 	constexpr static size_t MAX_SLOT_N = 256;	// minimum possible slot size is 256 bytes
 	constexpr static size_t MAX_PAGE_N = 1024;	// maximum possible total memory is 64MB with 64ki slot size
 
@@ -102,6 +102,7 @@ public:
 	int PagesCount;
 	byte* Memory;
 	aint ZxRamTop;		// for ZX-like machines, the RAMTOP system variable
+
 private:
 	int CurrentSlot;
 	CDeviceSlot* Slots[CDeviceDef::MAX_SLOT_N];

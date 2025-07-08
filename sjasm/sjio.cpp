@@ -32,8 +32,14 @@
 
 #include <fcntl.h>
 
+static const std::filesystem::path EMPTY_PATH{""};
+static const std::filesystem::path DOUBLE_DOT_PARENT{".."};
+static constexpr char pathBadSlash = '\\';
+static constexpr char pathGoodSlash = '/';
+
+std::filesystem::path LaunchDirectory {};
+
 int ListAddress;
-std::vector<const char*> archivedFileNames;	// archive of all files opened (also includes!) (fullname!)
 
 static constexpr int LIST_EMIT_BYTES_BUFFER_SIZE = 1024 * 64;
 static constexpr int DESTBUFLEN = 8192;
@@ -56,64 +62,122 @@ static aint WBLength = 0;
 
 static void CloseBreakpointsFile();
 
-// returns permanent C-string pointer to the fullpathname (if new, it is added to archive)
-const char* ArchiveFilename(const char* fullpathname) {
-	for (auto fname : archivedFileNames) {		// search whole archive for identical full name
-		if (!strcmp(fname, fullpathname)) return fname;
+std::string SInputFile::InitStr() {
+	auto canonical = std::filesystem::exists(full) ? std::filesystem::canonical(full) : full.lexically_normal();
+	switch(Options::FileVerbosity) {
+		case Options::FNAME_LAUNCH_REL:
+			{	// try relative to LaunchDirectory, if outside (starts with "../") then keep absolute
+				auto relative = canonical.lexically_proximate(LaunchDirectory);
+				if (relative.begin()->compare(DOUBLE_DOT_PARENT)) canonical = std::move(relative);
+			}
+			[[fallthrough]];
+		case Options::FNAME_ABSOLUTE:
+			return SJ_force_slash(canonical).string();
+		case Options::FNAME_BASE:
+		default:
+			return canonical.filename().string();
 	}
-	const char* newName = STRDUP(fullpathname);
-	archivedFileNames.push_back(newName);
-	return newName;
 }
 
-// does release all archived filenames, making all pointers (and archive itself) invalid
-void ReleaseArchivedFilenames() {
-	for (auto filename : archivedFileNames) free((void*)filename);
-	archivedFileNames.clear();
+std::filesystem::path GetOutputFileName(char*& p) {
+	auto str_name = GetDelimitedStringEx(p);	// read delimited filename string
+	SJ_FixSlashes(str_name);					// convert backslashes *with* warning
+	// prefix with output path and force slashes again (without warning)
+	return SJ_force_slash(Options::OutPrefix / str_name.first);
 }
 
-// find position of extension in filename (points at dot char or beyond filename if no extension)
-// filename is pointer to writeable format containing file name (can be full path) (NOT NULL)
-// if initWithName and filenameBufferSize are explicitly provided, filename will be first overwritten with those
-char* FilenameExtPos(char* filename, const char* initWithName, size_t initNameMaxLength) {
-	// if the init value is provided with positive buffer size, init the buffer first
-	if (0 < initNameMaxLength && initWithName) {
-		STRCPY(filename, initNameMaxLength, initWithName);
+static bool isAnySlash(const char c) {
+	return pathGoodSlash == c || pathBadSlash == c;
+}
+
+/**
+ * @brief Check if the path does start with MS windows drive-letter and colon, but accepts
+ * only absolute form with slash after colon, otherwise warns about relative way not supported.
+ *
+ * @param filePath p_filePath: filename to check
+ * @return bool true if the filename contains drive-letter with ABSOLUTE path
+ */
+static bool isWindowsDrivePathStart(const char* filePath) {
+	if (!filePath || !filePath[0] || ':' != filePath[1]) return false;
+	const char driveLetter = toupper(filePath[0]);
+	if (driveLetter < 'A' || 'Z' < driveLetter) return false;
+	if (!isAnySlash(filePath[2])) {
+		Warning("Relative file path with drive letter detected (not supported)", filePath, W_EARLY);
 	}
-	// find start of the base filename
-	const char* baseName = FilenameBasePos(filename);
-	// find extension of the filename and return position of it
-	char* const filenameEnd = filename + strlen(filename);
-	char* extPos = filenameEnd;
-	while (baseName < extPos && '.' != *extPos) --extPos;
-	if (baseName < extPos) return extPos;
-	// no extension found (empty filename, or "name", or ".name"), return end of filename
-	return filenameEnd;
+	return true;
 }
 
-const char* FilenameBasePos(const char* fullname) {
-	const char* const filenameEnd = fullname + strlen(fullname);
-	const char* baseName = filenameEnd;
-	while (fullname < baseName && '/' != baseName[-1] && '\\' != baseName[-1]) --baseName;
-	return baseName;
+fullpath_ref_t GetInputFile(delim_string_t && in) {
+
+	static dirs_in_map_t allArchivedInputFiles;
+	static const SInputFile INPUT_FILE_STDIN(1);	// fake "<stdin>" string and empty path
+
+	// check for special "empty" input value signalling <stdin>, return that instantly
+	if (in.first.empty() && DT_COUNT == in.second) return INPUT_FILE_STDIN;
+
+	// get current file's directory as base (use LaunchDirectory as fallback for stdin or zero level)
+	std::filesystem::path CurrentDirectory = (fileNameFull && !fileNameFull->full.empty()) ? fileNameFull->full : LaunchDirectory;
+	if (!std::filesystem::is_directory(CurrentDirectory)) CurrentDirectory.remove_filename();
+	// make current directory canonical+relative to launchdir (avoid "..//"-like dupes in allArchivedInputFiles)
+	CurrentDirectory = std::filesystem::canonical(CurrentDirectory).lexically_proximate(LaunchDirectory);
+
+	// archive of all input files opened so far in the current directory (search results differ per current dir)
+	files_in_map_t & archivedInputFiles = allArchivedInputFiles[CurrentDirectory];
+
+	// if already archived, return archived full path
+	SJ_FixSlashes(in);
+	const auto lb = archivedInputFiles.lower_bound(in);
+	if (archivedInputFiles.cend() != lb && lb->first == in) return lb->second;
+
+	// !!! any warnings after this point must be W_EARLY, 2nd+ pass should use archived path = no warning !!!
+
+	// not archived yet, look for the file somewhere...
+	const std::filesystem::path name_in{ in.first };
+	// no filename - return it as is (it's not valid for open)
+	if (!name_in.has_filename()) {
+		return archivedInputFiles.emplace_hint(lb, std::move(in), std::move(name_in))->second;
+	}
+	// absolute path or windows drive letter oddities - use it as is (even if not valid)
+	if (name_in.is_absolute() || isWindowsDrivePathStart(in.first.c_str())) {
+		return archivedInputFiles.emplace_hint(lb, std::move(in), std::move(name_in))->second;
+	}
+	// search include paths depending on delimiter and filename - first try current dir (except for "<name>")
+	const auto current_dir_file = SJ_force_slash(CurrentDirectory / name_in);
+	if (DT_ANGLE != in.second) {
+		// force this as result for DT_COUNT delimiter (CLI argument filename => no searching)
+		if (DT_COUNT == in.second || FileExists(current_dir_file)) {	// or if the file exists
+			return archivedInputFiles.emplace_hint(lb, std::move(in), std::move(current_dir_file))->second;
+		}
+	}
+	// search all include paths now
+	for (auto incPath = Options::IncludeDirsList.crbegin(); incPath != Options::IncludeDirsList.crend(); ++incPath) {
+		const auto dir_file = SJ_force_slash(*incPath / name_in);
+		if (!FileExists(dir_file)) continue;
+		return archivedInputFiles.emplace_hint(lb, std::move(in), std::move(dir_file))->second;
+	}
+	// still not found. Found or not, return current dir path, it's either that or missing
+	// do NOT return it "as input was", because that's enforcing LaunchDir as include path,
+	// even if explicitly removed by `--inc`
+	return archivedInputFiles.emplace_hint(lb, std::move(in), std::move(current_dir_file))->second;
 }
 
-void ConstructDefaultFilename(char* dest, size_t dest_size, const char* ext, bool checkIfDestIsEmpty) {
-	if (nullptr == dest || nullptr == ext || !ext[0]) exit(1);	// invalid arguments
+fullpath_ref_t GetInputFile(char*& p) {
+	auto name_in = GetDelimitedStringEx(p);
+	return GetInputFile(std::move(name_in));
+}
+
+void ConstructDefaultFilename(std::filesystem::path & dest, const char* ext, bool checkIfDestIsEmpty) {
+	if (nullptr == ext || !ext[0]) exit(1);	// invalid arguments
 	// if the destination buffer has already some content and check is requested, exit
-	if (checkIfDestIsEmpty && dest[0]) return;
-	size_t extSz = strlen(ext);
-	dest[0] = 0;
+	if (checkIfDestIsEmpty && !dest.empty()) return;
 	// construct the new default name - search for explicit name in sourcefiles
-	for (SSource & src : sourceFiles) {
+	dest = "asm";		// use "asm" base if no explicit filename available
+	for (const SSource & src : sourceFiles) {
 		if (!src.fname[0]) continue;
-		STRNCPY(dest, dest_size, src.fname, dest_size-1-extSz);
-		dest[dest_size-1-extSz] = 0;
+		dest = src.fname;
 		break;
 	}
-	if (!dest[0]) STRNCPY(dest, dest_size, "asm", dest_size-1);		// no explicit, use "asm" base
-	// replace the extension
-	STRCPY(FilenameExtPos(dest), dest_size, ext);
+	dest.replace_extension(ext);
 }
 
 void CheckRamLimitExceeded() {
@@ -187,7 +251,7 @@ void PrintHex(char* & dest, aint value, int nibbles) {
 	if (nibbles < 1 || 8 < nibbles) ExitASM(33);	// invalid argument
 	const char oldChAfter = dest[nibbles];
 	const aint mask = (int(sizeof(aint)*2) <= nibbles) ? ~0L : (1L<<(nibbles*4))-1L;
-	if (nibbles != sprintf(dest, "%0*X", nibbles, value&mask)) ExitASM(33);
+	if (nibbles != SPRINTF2(dest, 16, "%0*X", nibbles, value&mask)) ExitASM(33);
 	dest += nibbles;
 	*dest = oldChAfter;
 }
@@ -199,7 +263,7 @@ void PrintHex32(char*& dest, aint value) {
 void PrintHexAlt(char*& dest, aint value)
 {
 	char buffer[24] = { 0 }, * bp = buffer;
-	sprintf(buffer, "%04X", value);
+	SPRINTF1(buffer, 24, "%04X", value);
 	while (*bp) *dest++ = *bp++;
 }
 
@@ -226,9 +290,9 @@ void PrepareListLine(char* buffer, aint hexadd)
 	memset(buffer, ' ', 24);
 	if (listmacro) buffer[23] = '>';
 	if (Options::LST_T_MC_ONLY == Options::syx.ListingType) buffer[23] = '{';
-	sprintf(buffer, "%*u", linewidth, linenumber); buffer[linewidth] = ' ';
+	SPRINTF2(buffer, LINEMAX, "%*u", linewidth, linenumber); buffer[linewidth] = ' ';
 	memcpy(buffer + linewidth, "++++++", IncludeLevel > 6 - linewidth ? 6 - linewidth : IncludeLevel);
-	sprintf(buffer + 6, "%04X", hexadd & 0xFFFF); buffer[10] = ' ';
+	SPRINTF1(buffer + 6, LINEMAX, "%04X", hexadd & 0xFFFF); buffer[10] = ' ';
 	if (digit > '0') *buffer = digit & 0xFF;
 	// if substitutedLine is completely empty, list rather source line any way
 	if (!*substitutedLine) substitutedLine = line;
@@ -281,8 +345,8 @@ void ListFile(bool showAsSkipped) {
 		char* pp = pline + 10;
 		int BtoList = (nListBytes < 4) ? nListBytes : 4;
 		for (int i = 0; i < BtoList; ++i) {
-			if (-2 == ListEmittedBytes[i + pos]) pp += sprintf(pp, "...");
-			else pp += sprintf(pp, " %02X", ListEmittedBytes[i + pos]);
+			if (-2 == ListEmittedBytes[i + pos]) pp += (memcpy(pp, "...", 3), 3);
+			else pp += SPRINTF1(pp, 4, " %02X", ListEmittedBytes[i + pos]);
 		}
 		*pp = ' ';
 		if (showAsSkipped) pline[11] = '~';
@@ -370,8 +434,8 @@ void EmitByte(int byte, bool isInstructionStart) {
 }
 
 void EmitWord(int word, bool isInstructionStart) {
-	EmitByte(word % 256, isInstructionStart);
-	EmitByte(word / 256, false);
+	EmitByte(word & 0xFF, isInstructionStart);
+	EmitByte((word >> 8) & 0xFF, false);			// don't use "/ 256", doesn't work as expected for negative values!
 }
 
 void EmitBytes(const int* bytes, bool isInstructionStart) {
@@ -416,51 +480,16 @@ void EmitBlock(aint byte, aint len, bool preserveDeviceMemory, int emitMaxToList
 	}
 }
 
-char* GetPath(const char* fname, char** filenamebegin, bool systemPathsBeforeCurrent)
-{
-	char fullFilePath[MAX_PATH] = { 0 };
-	CStringsList* dir = Options::IncludeDirsList;	// include-paths to search
-	// search current directory first (unless "systemPathsBeforeCurrent")
-	if (!systemPathsBeforeCurrent) {
-		// if found, just skip the `while (dir)` loop
-		if (SJ_SearchPath(CurrentDirectory, fname, nullptr, MAX_PATH, fullFilePath, filenamebegin)) dir = nullptr;
-		else fullFilePath[0] = 0;	// clear fullFilePath every time when not found
-	}
-	while (dir) {
-		if (SJ_SearchPath(dir->string, fname, nullptr, MAX_PATH, fullFilePath, filenamebegin)) break;
-		fullFilePath[0] = 0;	// clear fullFilePath every time when not found
-		dir = dir->next;
-	}
-	// if the file was not found in the list, and current directory was not searched yet
-	if (!fullFilePath[0] && systemPathsBeforeCurrent) {
-		//and the current directory was not searched yet, do it now, set empty string if nothing
-		if (!SJ_SearchPath(CurrentDirectory, fname, NULL, MAX_PATH, fullFilePath, filenamebegin)) {
-			fullFilePath[0] = 0;	// clear fullFilePath every time when not found
-		}
-	}
-	if (!fullFilePath[0] && filenamebegin) {	// if still not found, reset also *filenamebegin
-		*filenamebegin = fullFilePath;
-	}
-	// copy the result into new memory
-	char* kip = STRDUP(fullFilePath);
-	if (kip == NULL) ErrorOOM();
-	// convert filenamebegin pointer into the copied string (from temporary buffer pointer)
-	if (filenamebegin) *filenamebegin += (kip - fullFilePath);
-	return kip;
-}
-
 // if offset is negative, it functions as "how many bytes from end of file"
 // if length is negative, it functions as "how many bytes from end of file to not load"
-void BinIncFile(const char* fname, aint offset, aint length) {
+void BinIncFile(fullpath_ref_t file, aint offset, aint length) {
 	// open the desired file
 	FILE* bif;
-	char* fullFilePath = GetPath(fname);
-	if (!FOPEN_ISOK(bif, fullFilePath, "rb")) Error("opening file", fname);
-	free(fullFilePath);
+	if (!FOPEN_ISOK(bif, file.full, "rb")) Error("opening file", file.str.c_str());
 
 	// Get length of file
 	int totlen = 0, advanceLength;
-	if (bif && (fseek(bif, 0, SEEK_END) || (totlen = ftell(bif)) < 0)) Error("telling file length", fname, FATAL);
+	if (bif && (fseek(bif, 0, SEEK_END) || (totlen = ftell(bif)) < 0)) Error("telling file length", file.str.c_str(), FATAL);
 
 	// process arguments (extra features like negative offset/length or INT_MAX length)
 	// negative offset means "from the end of file"
@@ -472,14 +501,14 @@ void BinIncFile(const char* fname, aint offset, aint length) {
 	// verbose output of final values (before validation may terminate assembler)
 	if (LASTPASS == pass && Options::OutputVerbosity <= OV_ALL) {
 		char diagnosticTxt[MAX_PATH];
-		SPRINTF4(diagnosticTxt, MAX_PATH, "include data: name=%s (%d bytes) Offset=%d  Len=%d", fname, totlen, offset, length);
+		SPRINTF4(diagnosticTxt, MAX_PATH, "include data: name=%s (%d bytes) Offset=%d  Len=%d", file.str.c_str(), totlen, offset, length);
 		_CERR diagnosticTxt _ENDL;
 	}
 	// validate the resulting [offset, length]
 	if (offset < 0 || length < 0 || totlen < offset + length) {
-		Error("file too short", fname);
-		offset = std::min(std::max(0, offset), totlen);			//TODO change to std::clamp when C++17 is used
-		length = std::min(std::max(0, length), totlen-offset);	//TODO change to std::clamp when C++17 is used
+		Error("file too short", file.str.c_str());
+		offset = std::clamp(offset, 0, totlen);
+		length = std::clamp(length, 0, totlen - offset);
 		assert((0 <= offset) && (offset + length <= totlen));
 	}
 	if (0 == length) {
@@ -508,75 +537,65 @@ void BinIncFile(const char* fname, aint offset, aint length) {
 	} else {
 		// Seek to the beginning of part to include
 		if (fseek(bif, offset, SEEK_SET) || ftell(bif) != offset) {
-			Error("seeking in file to offset", fname, FATAL);
+			Error("seeking in file to offset", file.str.c_str(), FATAL);
 		}
 
 		// Reading data from file
 		char* data = new char[length + 1], * bp = data;
 		if (NULL == data) ErrorOOM();
 		size_t res = fread(bp, 1, length, bif);
-		if (res != (size_t)length) Error("reading data from file failed", fname, FATAL);
+		if (res != (size_t)length) Error("reading data from file failed", file.str.c_str(), FATAL);
 		while (length--) EmitByteNoListing(*bp++);
 		delete[] data;
 	}
 	fclose(bif);
 }
 
-static void OpenDefaultList(const char *fullpath);
+static void OpenDefaultList(fullpath_ref_t inputFile);
 
 static stdin_log_t::const_iterator stdin_read_it;
 static stdin_log_t* stdin_log = nullptr;
 
-void OpenFile(const char* nfilename, bool systemPathsBeforeCurrent, stdin_log_t* fStdinLog)
+void OpenFile(fullpath_ref_t nfilename, stdin_log_t* fStdinLog)
 {
 	if (++IncludeLevel > 20) {
 		Error("Over 20 files nested", NULL, ALL);
 		--IncludeLevel;
 		return;
 	}
-	char* fullpath, * filenamebegin;
-	if (!*nfilename && fStdinLog) {
-		fullpath = STRDUP("<stdin>");
-		filenamebegin = fullpath;
+	assert(!fStdinLog || nfilename.full.empty());
+	if (fStdinLog) {
 		FP_Input = stdin;
 		stdin_log = fStdinLog;
 		stdin_read_it = stdin_log->cbegin();	// reset read iterator (for 2nd+ pass)
 	} else {
-		fullpath = GetPath(nfilename, &filenamebegin, systemPathsBeforeCurrent);
-
-		if (!FOPEN_ISOK(FP_Input, fullpath, "rb")) {
-			free(fullpath);
-			Error("opening file", nfilename, ALL);
+		if (!FOPEN_ISOK(FP_Input, nfilename.full, "rb")) {
+			Error("opening file", nfilename.str.c_str(), ALL);
 			--IncludeLevel;
 			return;
 		}
 	}
 
-	const char* oFileNameFull = fileNameFull, * oCurrentDirectory = CurrentDirectory;
+	fullpath_p_t oFileNameFull = fileNameFull;
 
 	// archive the filename (for referencing it in SLD tracing data or listing/errors)
-	fileNameFull = ArchiveFilename(fullpath);	// get const pointer into archive
-	sourcePosStack.emplace_back(Options::IsShowFullPath ? fileNameFull : FilenameBasePos(fileNameFull));
+	fileNameFull = &nfilename;
+	sourcePosStack.emplace_back(nfilename.str.c_str());
 
 	// refresh pre-defined values related to file/include
 	DefineTable.Replace("__INCLUDE_LEVEL__", IncludeLevel);
-	DefineTable.Replace("__FILE__", fileNameFull);
-	if (0 == IncludeLevel) DefineTable.Replace("__BASE_FILE__", fileNameFull);
+	DefineTable.Replace("__FILE__", nfilename.str.c_str());
+	if (0 == IncludeLevel) DefineTable.Replace("__BASE_FILE__", nfilename.str.c_str());
 
-	// open default listing file for each new source file (if default listing is ON)
-	if (LASTPASS == pass && 0 == IncludeLevel && Options::IsDefaultListingName) {
-		OpenDefaultList(fileNameFull);			// explicit listing file is already opened
-	}
+	// open default listing file for each new source file (if default listing is ON) / explicit listing is already opened
+	if (0 == IncludeLevel && Options::IsDefaultListingName) OpenDefaultList(nfilename);
 	// show in listing file which file was opened
 	FILE* listFile = GetListingFile();
 	if (LASTPASS == pass && listFile) {
 		fputs("# file opened: ", listFile);
-		fputs(fileNameFull, listFile);
+		fputs(nfilename.str.c_str(), listFile);
 		fputs("\n", listFile);
 	}
-
-	*filenamebegin = 0;					// shorten fullpath to only-path string
-	CurrentDirectory = fullpath;		// and use it as CurrentDirectory
 
 	rlpbuf = rlpbuf_end = rlbuf;
 	colonSubline = false;
@@ -591,14 +610,11 @@ void OpenFile(const char* nfilename, bool systemPathsBeforeCurrent, stdin_log_t*
 			clearerr(stdin);			// reset EOF on the stdin for another round of input
 		}
 	}
-	CurrentDirectory = oCurrentDirectory;
-	free(fullpath);						// was used by CurrentDirectory till now
-	fullpath = nullptr;
 
 	// show in listing file which file was closed
 	if (LASTPASS == pass && listFile) {
 		fputs("# file closed: ", listFile);
-		fputs(fileNameFull, listFile);
+		fputs(nfilename.str.c_str(), listFile);
 		fputs("\n", listFile);
 
 		// close listing file (if "default" listing filename is used)
@@ -617,11 +633,11 @@ void OpenFile(const char* nfilename, bool systemPathsBeforeCurrent, stdin_log_t*
 
 	// refresh pre-defined values related to file/include
 	DefineTable.Replace("__INCLUDE_LEVEL__", IncludeLevel);
-	DefineTable.Replace("__FILE__", fileNameFull ? fileNameFull : "<none>");
+	DefineTable.Replace("__FILE__", fileNameFull ? fileNameFull->str.c_str() : "<none>");
 	if (-1 == IncludeLevel) DefineTable.Replace("__BASE_FILE__", "<none>");
 }
 
-void IncludeFile(const char* nfilename, bool systemPathsBeforeCurrent)
+void IncludeFile(fullpath_ref_t nfilename)
 {
 	auto oStdin_log = stdin_log;
 	auto oStdin_read_it = stdin_read_it;
@@ -633,7 +649,7 @@ void IncludeFile(const char* nfilename, bool systemPathsBeforeCurrent)
 	bool oColonSubline = colonSubline;
 	if (blockComment) Error("Internal error 'block comment'", NULL, FATAL);	// comment can't INCLUDE
 
-	OpenFile(nfilename, systemPathsBeforeCurrent);
+	OpenFile(nfilename);
 
 	colonSubline = oColonSubline;
 	rlpbuf = pbuf, rlpbuf_end = pbuf_end;
@@ -734,6 +750,13 @@ void ReadBufLine(bool Parse, bool SplitByColon) {
 			*rlppos = *rlpbuf++;
 			afterNonAlphaNum = afterNonAlphaNumNext;
 			afterNonAlphaNumNext = !isalnum((byte)*rlppos);
+			// handle EOL escaping, limited implementation, usage not recommended
+			if ('\\' == *rlppos && ReadBufData() && ('\r' == *rlpbuf || '\n' == *rlpbuf))  {
+				char CRLFtest = (*rlpbuf++) ^ ('\r'^'\n');	// flip CR->LF || LF->CR (and eats first)
+				if (ReadBufData() && CRLFtest == *rlpbuf) ++rlpbuf;	// if CRLF/LFCR pair, eat also second
+				sourcePosStack.back().nextSegment();	// mark last line in errors/etc
+				continue;								// continue with chars from next line
+			}
 			// Block comments logic first (anything serious may happen only "outside" of block comment
 			if ('*' == *rlppos && ReadBufData() && '/' == *rlpbuf) {
 				if (0 < blockComment) --blockComment;	// block comment ends here, -1 from nesting
@@ -811,12 +834,13 @@ void ReadBufLine(bool Parse, bool SplitByColon) {
 	} // while (IsRunning && ReadBufData())
 }
 
-static void OpenListImp(const char* listFilename) {
+static void OpenListImp(const std::filesystem::path & listFilename) {
 	// if STDERR is configured to contain listing, disable other listing files
 	if (OV_LST == Options::OutputVerbosity) return;
-	if (NULL == listFilename || !listFilename[0]) return;
-	if (!FOPEN_ISOK(FP_ListingFile, listFilename, "w")) {
-		Error("opening file for write", listFilename, FATAL);
+	if (listFilename.empty()) return;
+	// in first pass overwrite the file, in later passes append to it
+	if (!FOPEN_ISOK(FP_ListingFile, listFilename, pass <= 1 ? "w" : "a")) {
+		Error("opening file for write", listFilename.string().c_str(), FATAL);
 	}
 }
 
@@ -829,18 +853,16 @@ void OpenList() {
 	OpenListImp(Options::ListingFName);
 }
 
-static void OpenDefaultList(const char *fullpath) {
+static void OpenDefaultList(fullpath_ref_t inputFile) {
 	// if STDERR is configured to contain listing, disable other listing files
 	if (OV_LST == Options::OutputVerbosity) return;
 	// check if listing file is already opened, or it is set to explicit file name
 	if (!Options::IsDefaultListingName || NULL != FP_ListingFile) return;
-	if (NULL == fullpath || !*fullpath) return;		// no filename provided
+	if (inputFile.full.empty()) return;		// no filename provided
 	// Create default listing name, and try to open it
-	char tempListName[LINEMAX+10];		// make sure there is enough room for new extension
-	char* extPos = FilenameExtPos(tempListName, fullpath, LINEMAX);	// find extension position
-	STRCPY(extPos, 5, ".lst");			// overwrite it with ".lst"
-	// list filename prepared, open it
-	OpenListImp(tempListName);
+	std::filesystem::path listName { inputFile.full };
+	listName.replace_extension("lst");
+	OpenListImp(listName);
 }
 
 void CloseDest() {
@@ -871,12 +893,12 @@ void SeekDest(long offset, int method) {
 	}
 }
 
-void NewDest(const char* newfilename, int mode) {
+void NewDest(const std::filesystem::path & newfilename, int mode) {
 	// close previous output file
 	CloseDest();
 
 	// and open new file (keep previous/default name, if no explicit was provided)
-	if (newfilename && *newfilename) STRCPY(Options::DestinationFName, LINEMAX, newfilename);
+	if (!newfilename.empty()) Options::DestinationFName = newfilename;
 	OpenDest(mode);
 }
 
@@ -886,16 +908,16 @@ void OpenDest(int mode) {
 		mode = OUTPUT_TRUNCATE;
 	}
 	if (!Options::NoDestinationFile && !FOPEN_ISOK(FP_Output, Options::DestinationFName, mode == OUTPUT_TRUNCATE ? "wb" : "r+b")) {
-		Error("opening file for write", Options::DestinationFName, FATAL);
+		Error("opening file for write", Options::DestinationFName.string().c_str(), FATAL);
 	}
 	Options::NoDestinationFile = false;
-	if (NULL == FP_RAW && '-' == Options::RAWFName[0] && 0 == Options::RAWFName[1]) {
+	if (NULL == FP_RAW && "-" == Options::RAWFName) {
 		FP_RAW = stdout;
 		fflush(stdout);
 		switchStdOutIntoBinaryMode();
 	}
-	if (FP_RAW == NULL && Options::RAWFName[0] && !FOPEN_ISOK(FP_RAW, Options::RAWFName, "wb")) {
-		Error("opening file for write", Options::RAWFName);
+	if (FP_RAW == NULL && Options::RAWFName.has_filename() && !FOPEN_ISOK(FP_RAW, Options::RAWFName, "wb")) {
+		Error("opening file for write", Options::RAWFName.string().c_str());
 	}
 	if (FP_Output != NULL && mode != OUTPUT_TRUNCATE) {
 		if (fseek(FP_Output, 0, mode == OUTPUT_REWIND ? SEEK_SET : SEEK_END)) {
@@ -924,15 +946,15 @@ void CloseTapFile()
 	FP_tapout = NULL;
 }
 
-void OpenTapFile(const char * tapename, int flagbyte)
+void OpenTapFile(const std::filesystem::path & tapename, int flagbyte)
 {
 	CloseTapFile();
 
 	if (!FOPEN_ISOK(FP_tapout,tapename, "r+b")) {
-		Error( "opening file for write", tapename);
+		Error( "opening file for write", tapename.string().c_str());
 		return;
 	}
-	if (fseek(FP_tapout, 0, SEEK_END)) Error("File seek end error in TAPOUT", tapename, FATAL);
+	if (fseek(FP_tapout, 0, SEEK_END)) Error("File seek end error in TAPOUT", tapename.string().c_str(), FATAL);
 
 	tape_seek = ftell(FP_tapout);
 	tape_parity = flagbyte;
@@ -946,11 +968,17 @@ void OpenTapFile(const char * tapename, int flagbyte)
 	}
 }
 
-bool FileExists(const char* file_name) {
-	FILE* test;
-	bool exists = FOPEN_ISOK(test, file_name, "r");
-	exists && fclose(test);
-	return exists;
+// check if file exists and can be read for content
+bool FileExists(const std::filesystem::path & file_name) {
+	return	std::filesystem::exists(file_name) && (
+		std::filesystem::is_regular_file(file_name) ||
+		std::filesystem::is_character_file(file_name)	// true for very rare files like /dev/null
+	);
+}
+
+bool FileExistsCstr(const char* file_name) {
+	if (nullptr == file_name) return false;
+	return FileExists(std::filesystem::path(file_name));
 }
 
 void Close() {
@@ -1031,20 +1059,18 @@ unsigned char MemGetByte(unsigned int address) {
 }
 
 
-int SaveBinary(const char* fname, aint start, aint length) {
+int SaveBinary(const std::filesystem::path & fname, aint start, aint length) {
 	FILE* ff;
-	if (!FOPEN_ISOK(ff, fname, "wb")) {
-		Error("opening file for write", fname, FATAL);
-	}
+	if (!FOPEN_ISOK(ff, fname, "wb")) Error("opening file for write", fname.string().c_str(), FATAL);
 	int result = SaveRAM(ff, start, length);
 	fclose(ff);
 	return result;
 }
 
 
-int SaveBinary3dos(const char* fname, aint start, aint length, byte type, word w2, word w3) {
+int SaveBinary3dos(const std::filesystem::path & fname, aint start, aint length, byte type, word w2, word w3) {
 	FILE* ff;
-	if (!FOPEN_ISOK(ff, fname, "wb")) Error("opening file for write", fname, FATAL);
+	if (!FOPEN_ISOK(ff, fname, "wb")) Error("opening file for write", fname.string().c_str(), FATAL);
 	// prepare +3DOS 128 byte header content
 	constexpr aint hsize = 128;
 	const aint full_length = hsize + length;
@@ -1071,10 +1097,10 @@ int SaveBinary3dos(const char* fname, aint start, aint length, byte type, word w
 }
 
 
-int SaveBinaryAmsdos(const char* fname, aint start, aint length, word start_adr, byte type) {
+int SaveBinaryAmsdos(const std::filesystem::path & fname, aint start, aint length, word start_adr, byte type) {
 	FILE* ff;
 	if (!FOPEN_ISOK(ff, fname, "wb")) {
-		Error("opening file for write", fname, SUPPRESS);
+		Error("opening file for write", fname.string().c_str(), SUPPRESS);
 		return 0;
 	}
 	// prepare AMSDOS 128 byte header content
@@ -1106,16 +1132,16 @@ bool SaveDeviceMemory(FILE* file, const size_t start, const size_t length) {
 
 
 // start and length must be sanitized by caller
-bool SaveDeviceMemory(const char* fname, const size_t start, const size_t length) {
+bool SaveDeviceMemory(const std::filesystem::path & fname, const size_t start, const size_t length) {
 	FILE* ff;
-	if (!FOPEN_ISOK(ff, fname, "wb")) Error("opening file for write", fname, FATAL);
+	if (!FOPEN_ISOK(ff, fname, "wb")) Error("opening file for write", fname.string().c_str(), FATAL);
 	bool res = SaveDeviceMemory(ff, start, length);
 	fclose(ff);
 	return res;
 }
 
 
-int SaveHobeta(const char* fname, const char* fhobname, aint start, aint length) {
+int SaveHobeta(const std::filesystem::path & fname, const char* fhobname, aint start, aint length) {
 	unsigned char header[0x11];
 	int i;
 
@@ -1165,7 +1191,7 @@ int SaveHobeta(const char* fname, const char* fhobname, aint start, aint length)
 
 	FILE* ff;
 	if (!FOPEN_ISOK(ff, fname, "wb")) {
-		Error("opening file for write", fname, FATAL);
+		Error("opening file for write", fname.string().c_str(), FATAL);
 	}
 
 	int result = (17 == fwrite(header, 1, 17, ff)) && SaveRAM(ff, start, length);
@@ -1278,7 +1304,8 @@ int ReadLine(bool SplitByColon) {
 int ReadFileToCStringsList(CStringsList*& f, const char* end) {
 	// f itself should be already NULL, not resetting it here
 	CStringsList** s = &f;
-	while (ReadLineNoMacro()) {
+	bool SplitByColon = true;
+	while (ReadLineNoMacro(SplitByColon)) {
 		++CompiledCurrentLine;
 		char* p = line;
 		SkipBlanks(p);
@@ -1290,15 +1317,21 @@ int ReadFileToCStringsList(CStringsList*& f, const char* end) {
 		*s = new CStringsList(line);
 		s = &((*s)->next);
 		ListFile(true);
+		// Try to ignore colons inside lua blocks... this is far from bulletproof, but should improve it
+		if (SplitByColon && cmphstr(p, "lua")) {
+			SplitByColon = false;
+		} else if (!SplitByColon && cmphstr(p, "endlua")) {
+			SplitByColon = true;
+		}
 	}
 	return 0;
 }
 
 void OpenExpFile() {
 	assert(nullptr == FP_ExportFile);			// this should be the first and only call to open it
-	if (0 == Options::ExportFName[0]) return;	// no export file name provided, skip opening
+	if (!Options::ExportFName.has_filename()) return;	// no export file name provided, skip opening
 	if (FOPEN_ISOK(FP_ExportFile, Options::ExportFName, "w")) return;
-	Error("opening file for write", Options::ExportFName, ALL);
+	Error("opening file for write", Options::ExportFName.string().c_str(), ALL);
 }
 
 void WriteLabelEquValue(const char* name, aint value, FILE* f) {
@@ -1332,10 +1365,10 @@ static void WriteToSldFile_TextFilePos(char* buffer, const TextFilePos & pos) {
 	snprintf(buffer, 1024-1, sldMessage_posFormat + offsetFormat, pos.line, pos.colBegin, pos.colEnd);
 }
 
-static void OpenSldImp(const char* sldFilename) {
-	if (nullptr == sldFilename || !sldFilename[0]) return;
+static void OpenSldImp(const std::filesystem::path & sldFilename) {
+	if (!sldFilename.has_filename()) return;
 	if (!FOPEN_ISOK(FP_SourceLevelDebugging, sldFilename, "w")) {
-		Error("opening file for write", sldFilename, FATAL);
+		Error("opening file for write", sldFilename.string().c_str(), FATAL);
 	}
 	fputs("|SLD.data.version|1\n", FP_SourceLevelDebugging);
 	if (0 < sldCommentKeywords.size()) {
@@ -1350,12 +1383,12 @@ static void OpenSldImp(const char* sldFilename) {
 	}
 }
 
-// will write directly into Options::SourceLevelDebugFName array
+// will write result directly into Options::SourceLevelDebugFName
 static void OpenSld_buildDefaultNameIfNeeded() {
 	// check if SLD file name is already explicitly defined, or default is wanted
-	if (Options::SourceLevelDebugFName[0] || !Options::IsDefaultSldName) return;
+	if (Options::SourceLevelDebugFName.has_filename() || !Options::IsDefaultSldName) return;
 	// name is still empty, and default is wanted, create one (start with "out" or first source name)
-	ConstructDefaultFilename(Options::SourceLevelDebugFName, LINEMAX, ".sld.txt", false);
+	ConstructDefaultFilename(Options::SourceLevelDebugFName, "sld.txt", false);
 }
 
 // returns true only in the LASTPASS and only when "sld" file was specified by user
@@ -1423,7 +1456,7 @@ void WriteToSldFile(int pageNum, int value, char type, const char* symbol) {
 	const bool outside_source = (sourcePosStack.size() <= size_t(IncludeLevel));
 	const bool has_def_pos = !outside_source && (size_t(IncludeLevel + 1) < sourcePosStack.size());
 	const TextFilePos & curPos = outside_source ? sourcePosStack.back() : sourcePosStack.at(IncludeLevel);
-	const TextFilePos defPos = has_def_pos ? sourcePosStack.back() : TextFilePos();
+	const TextFilePos & defPos = has_def_pos ? sourcePosStack.back() : TextFilePos();
 
 	const char* macroFN = defPos.filename && strcmp(defPos.filename, curPos.filename) ? defPos.filename : "";
 	WriteToSldFile_TextFilePos(sldMessage_sourcePos, curPos);
@@ -1467,9 +1500,9 @@ static FILE* FP_BreakpointsFile = nullptr;
 static EBreakpointsFile breakpointsType;
 static int breakpointsCounter;
 
-void OpenBreakpointsFile(const char* filename, const EBreakpointsFile type) {
-	if (nullptr == filename || !filename[0]) {
-		Error("empty filename", filename, EARLY);
+void OpenBreakpointsFile(const std::filesystem::path & filename, const EBreakpointsFile type) {
+	if (!filename.has_filename()) {
+		Error("empty filename", filename.string().c_str(), EARLY);
 		return;
 	}
 	if (FP_BreakpointsFile) {
@@ -1477,7 +1510,7 @@ void OpenBreakpointsFile(const char* filename, const EBreakpointsFile type) {
 		return;
 	}
 	if (!FOPEN_ISOK(FP_BreakpointsFile, filename, "w")) {
-		Error("opening file for write", filename, EARLY);
+		Error("opening file for write", filename.string().c_str(), EARLY);
 	}
 	breakpointsCounter = 0;
 	breakpointsType = type;
@@ -1485,6 +1518,7 @@ void OpenBreakpointsFile(const char* filename, const EBreakpointsFile type) {
 
 static void CloseBreakpointsFile() {
 	if (!FP_BreakpointsFile) return;
+	if (BPSF_MAME == breakpointsType) fputs("g\n", FP_BreakpointsFile);
 	fclose(FP_BreakpointsFile);
 	FP_BreakpointsFile = nullptr;
 }
@@ -1495,10 +1529,13 @@ void WriteBreakpoint(const aint val) {
 		return;
 	}
 	++breakpointsCounter;
+	check16u(val);
 	switch (breakpointsType) {
 		case BPSF_UNREAL:
-			check16u(val);
 			fprintf(FP_BreakpointsFile, "x0=0x%04X\n", val&0xFFFF);
+			break;
+		case BPSF_MAME:		// technically "0x" can be omitted for MAME, but it also shouldn't hurt
+			fprintf(FP_BreakpointsFile, "bp 0x%04X\n", val&0xFFFF);
 			break;
 		case BPSF_ZESARUX:
 			if (1 == breakpointsCounter) fputs(" --enable-breakpoints ", FP_BreakpointsFile);
@@ -1506,7 +1543,6 @@ void WriteBreakpoint(const aint val) {
 				Warning("Maximum amount of 100 breakpoints has been already reached, this one is ignored");
 				break;
 			}
-			check16u(val);
 			fprintf(FP_BreakpointsFile, "--set-breakpoint %d \"PC=%d\" ", breakpointsCounter, val&0xFFFF);
 			break;
 	}

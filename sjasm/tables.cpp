@@ -48,6 +48,16 @@ void TextFilePos::nextSegment(bool endsWithColon, size_t advanceColumns) {
 	else				colEnd = 0;
 }
 
+std::string vorlab;
+
+void InitVorlab() {
+	if (ModuleName[0]) {
+		vorlab = ModuleName; vorlab += "._";
+	} else {
+		vorlab = "_";
+	}
+}
+
 char* PreviousIsLabel = nullptr;
 
 // since v1.18.0:
@@ -78,7 +88,7 @@ char* ValidateLabel(const char* naam, bool setNameSpace, bool ignoreCharAfter) {
 	}
 	if (global || local) ++naam;	// single modifier is parsed
 	const bool inMacro = !escMacro && local && macrolabp;
-	const bool inModule = !inMacro && !global && ModuleName[0];
+	const bool inModule = !inMacro && !global && !local && ModuleName[0];
 	// check all chars of label
 	const char* np = naam;
 	while (islabchar(*np)) ++np;
@@ -92,30 +102,25 @@ char* ValidateLabel(const char* naam, bool setNameSpace, bool ignoreCharAfter) {
 	int labelLen = (np - naam), truncateAt = LABMAX;
 	if (LABMAX < labelLen) Error("Label too long", naam, IF_FIRST);	// non-fatal error, will truncate it
 	if (inMacro) labelLen += 1 + strlen(macrolabp);
-	else if (local) labelLen += 1 + strlen(vorlabp);
+	else if (local) labelLen += 1 + vorlab.size();
 	if (inModule) labelLen += 1 + strlen(ModuleName);
 	// build fully qualified label name (in newly allocated memory buffer, with precise length)
 	char* const label = new char[1+labelLen];
 	if (nullptr == label) ErrorOOM();
 	label[0] = 0;
-	if (inModule) {
-		STRCAT(label, labelLen, ModuleName);	STRCAT(label, 2, ".");
+	if (inModule) {		// false when `local` so doesn't double with vorlab content
+		STRCAT(label, labelLen, ModuleName);		STRCAT(label, 2, ".");
 	}
 	if (inMacro) {
-		STRCAT(label, labelLen, macrolabp);		STRCAT(label, 2, ">");
+		STRCAT(label, labelLen, macrolabp);			STRCAT(label, 2, ">");
 	} else if (local) {
-		STRCAT(label, labelLen, vorlabp);		STRCAT(label, 2, ".");
+		STRCAT(label, labelLen, vorlab.c_str());	STRCAT(label, 2, ".");
 	}
-	char* lp = label + strlen(label), * newVorlabP = nullptr;
-	if (setNameSpace && !local) newVorlabP = lp;	// here will start new non-local label prefix
+	char* lp = label + strlen(label);
 	while (truncateAt-- && islabchar(*naam)) *lp++ = *naam++;	// add the new label (truncated if needed)
 	*lp = 0;
 	if (labelLen < lp - label) Error("internal error", nullptr, FATAL);		// should never happen :)
-	if (newVorlabP) {
-		free(vorlabp);
-		vorlabp = STRDUP(newVorlabP);
-		if (vorlabp == NULL) ErrorOOM();
-	}
+	if (setNameSpace && !local) vorlab = label;
 	return label;
 }
 
@@ -125,11 +130,17 @@ char* ExportLabelToSld(const char* naam, const SLabelTableEntry* label) {
 	// does re-parse the original source line again similarly to ValidateLabel
 	// but prepares SLD 'L'-type line, with module/main/local comma separated + usage traits info
 	assert(nullptr != label);
+	// check if this is setting namespace
+	bool setNameSpace = ('!' != *naam);
+	if (!setNameSpace) ++naam;
+	// check if local label defined inside macro wants to become non-macro local label
+	const bool escMacro = setNameSpace && macrolabp && ('@' == naam[0]) && ('.' == naam[1]);
+	if (escMacro) ++naam;			// such extra "@" is consumed right here and only '.' is left
 	assert(isLabelStart(naam));		// this should be called only when ValidateLabel did succeed
 	const bool global = '@' == *naam;
 	const bool local = '.' == *naam;
 	if (global || local) ++naam;	// single modifier is parsed
-	const bool inMacro = local && macrolabp;
+	const bool inMacro = !escMacro && local && macrolabp;
 	const bool inModule = !inMacro && !global && ModuleName[0];
 	const bool isStructLabel = (label->traits & (LABEL_IS_STRUCT_D|LABEL_IS_STRUCT_E));
 	// build fully qualified SLD info
@@ -137,10 +148,16 @@ char* ExportLabelToSld(const char* naam, const SLabelTableEntry* label) {
 	// module part
 	if (inModule) STRCAT(sldLabelExport, LINEMAX, ModuleName);
 	STRCAT(sldLabelExport, 2, ",");
-	// main label part (the `vorlabp` is already the current label, if it was main label)
-	// except for structure labels: the inner ones don't "set namespace" == vorlabp, use "naam" then
-	// (but only if the main label of structure itself is not local, if it's local, use vorlabp)
-	STRCAT(sldLabelExport, LABMAX, isStructLabel && !local ? naam : inMacro ? macrolabp : vorlabp);
+	// main label part (the `vorlab` is already the current label, if it was main label)
+	// except for structure labels: the inner ones don't "set namespace" == vorlab, use "naam" then
+	// (but only if the main label of structure itself is not local, if it's local, use vorlab)
+	const char* mainLabel = isStructLabel && !local ? naam : inMacro ? macrolabp : vorlab.data();
+	if (!setNameSpace) mainLabel = naam;
+	if (vorlab.data() == mainLabel && ModuleName[0]) {	// vorlab may contain module part, skip it then
+		auto modNameSz = strlen(ModuleName);
+		if (0 == strncmp(ModuleName, mainLabel, modNameSz)) mainLabel += modNameSz + 1;
+	}
+	STRCAT(sldLabelExport, LABMAX, mainLabel);
 	STRCAT(sldLabelExport, 2, ",");
 	// local part
 	if (local) STRCAT(sldLabelExport, LABMAX, naam);
@@ -203,15 +220,7 @@ static SLabelTableEntry* SearchLabel(char*& p, bool setUsed, /*out*/ std::unique
 			// if no more outer macros, try module+non-local prefix with the original local label
 			if ('>' == *findName++) {
 				inMacro = false;
-				if (modNameLen) {
-					#pragma GCC diagnostic push	// disable gcc8 warning about truncation - that's intended behaviour
-					#if 8 <= __GNUC__
-						#pragma GCC diagnostic ignored "-Wstringop-truncation"
-					#endif
-					STRCAT(temp, LINEMAX-2, ModuleName); STRCAT(temp, 2, ".");
-					#pragma GCC diagnostic pop
-				}
-				STRCAT(temp, LABMAX-1, vorlabp); STRCAT(temp, 2, ".");
+				STRCAT(temp, LABMAX-1, vorlab.c_str()); STRCAT(temp, 2, ".");
 				STRCAT(temp, LABMAX-1, findName);
 				findName = temp;
 			}
@@ -455,7 +464,7 @@ void CLabelTable::DumpForUnreal() {
 	char ln[LINEMAX], * ep;
 	FILE* FP_UnrealList;
 	if (!FOPEN_ISOK(FP_UnrealList, Options::UnrealLabelListFName, "w")) {
-		Error("opening file for write", Options::UnrealLabelListFName, FATAL);
+		Error("opening file for write", Options::UnrealLabelListFName.string().c_str(), FATAL);
 	}
 	const int PAGE_MASK = DeviceID ? Device->GetPage(0)->Size - 1 : 0x3FFF;
 	const int ADR_MASK = Options::EmitVirtualLabels ? 0xFFFF : PAGE_MASK;
@@ -474,7 +483,7 @@ void CLabelTable::DumpForUnreal() {
 		int lvalue = symbol.value & ADR_MASK;
 		ep = ln;
 
-		if (page < LABEL_PAGE_ROM) ep += sprintf(ep, "%02d", page&255);
+		if (page < LABEL_PAGE_ROM) ep += SPRINTF1(ep, LINEMAX, "%02d", page&255);
 		*(ep++) = ':';
 		PrintHexAlt(ep, lvalue);
 
@@ -489,7 +498,7 @@ void CLabelTable::DumpForUnreal() {
 void CLabelTable::DumpForCSpect() {
 	FILE* file;
 	if (!FOPEN_ISOK(file, Options::CSpectMapFName, "w")) {
-		Error("opening file for write", Options::CSpectMapFName, FATAL);
+		Error("opening file for write", Options::CSpectMapFName.string().c_str(), FATAL);
 	}
 	const int CSD_PAGE_SIZE = Options::CSpectMapPageSize;
 	const int CSD_PAGE_MASK = CSD_PAGE_SIZE - 1;
@@ -541,7 +550,7 @@ void CLabelTable::DumpForCSpect() {
 void CLabelTable::DumpSymbols() {
 	FILE* symfp;
 	if (!FOPEN_ISOK(symfp, Options::SymbolListFName, "w")) {
-		Error("opening file for write", Options::SymbolListFName, FATAL);
+		Error("opening file for write", Options::SymbolListFName.string().c_str(), FATAL);
 	}
 	const auto order = getDumpOrder(symbols);
 	for (const symbol_map_t::key_type& name: order) {
@@ -815,67 +824,18 @@ const char* CMacroDefineTable::getverv(const char* name) const {
 	return p ? p->value : nullptr;
 }
 
-int CMacroDefineTable::FindDuplicate(char* name) {
-	CDefineTableEntry* p = defs;
-	if (!used[(*name)&127]) {
-		return 0;
-	}
-	while (p) {
-		if (!strcmp(name, p->name)) {
-			return 1;
-		}
-		p = p->next;
-	}
-	return 0;
-}
-
-CMacroTableEntry::CMacroTableEntry(char* nnaam, CMacroTableEntry* nnext)
-	: naam(nnaam), args(nullptr), body(nullptr), next(nnext) {
-}
-
-CMacroTableEntry::~CMacroTableEntry() {
-	if (naam) free(naam);	// must be of STRDUP origin!
-	if (args) delete args;
-	if (body) delete body;
-	if (next) delete next;
-}
-
-CMacroTable::CMacroTable() : macs(nullptr) {
-	for (auto & usedX : used) usedX = false;
-}
-
-CMacroTable::~CMacroTable() {
-	if (macs) delete macs;
-}
-
 void CMacroTable::ReInit() {
-	if (macs) delete macs;
-	macs = nullptr;
-	for (auto & usedX : used) usedX = false;
-}
-
-int CMacroTable::FindDuplicate(const char* naam) {
-	CMacroTableEntry* p = macs;
-	if (!used[(*naam)&127]) {
-		return 0;
-	}
-	while (p) {
-		if (!strcmp(naam, p->naam)) {
-			return 1;
-		}
-		p = p->next;
-	}
-	return 0;
+	used.assign(128, false);
+	macs.clear();
 }
 
 void CMacroTable::Add(const char* nnaam, char*& p) {
-	if (FindDuplicate(nnaam)) {
-		Error("Duplicate macroname", nnaam);return;
+	auto [add_it, is_new] = macs.try_emplace(nnaam, CMacroTableEntry());
+	if (!is_new) {
+		Error("Duplicate macroname", nnaam);
+		return;
 	}
-	char* macroname = STRDUP(nnaam);
-	if (macroname == NULL) ErrorOOM();
-	macs = new CMacroTableEntry(macroname, macs);
-	used[(*macroname)&127] = true;
+	used[nnaam[0] & 127] = true;
 	CStringsList* last = nullptr;
 	do {
 		char* n = GetID(p);
@@ -885,12 +845,12 @@ void CMacroTable::Add(const char* nnaam, char*& p) {
 			SkipToEol(p);
 			break;
 		}
-		if ((1 == pass) && CStringsList::contains(macs->args, n)) {
+		if ((1 == pass) && CStringsList::contains(add_it->second.args, n)) {
 			Error("Duplicate argument name", n, EARLY);
 		}
 		CStringsList* argname = new CStringsList(n);
-		if (!macs->args) {
-			macs->args = argname;	// first argument name, make it head of list
+		if (!add_it->second.args) {
+			add_it->second.args = argname;	// first argument name, make it head of list
 		} else {
 			last->next = argname;
 		}
@@ -900,17 +860,16 @@ void CMacroTable::Add(const char* nnaam, char*& p) {
 		Error("Unexpected", p, EARLY);
 	}
 	ListFile();
-	if (!ReadFileToCStringsList(macs->body, "endm")) {
+	if (!ReadFileToCStringsList(add_it->second.body, "endm")) {
 		Error("Unexpected end of macro", NULL, EARLY);
 	}
 }
 
 int CMacroTable::Emit(char* naam, char*& p) {
 	// search for the desired macro
-	if (!used[(*naam)&127]) return 0;
-	CMacroTableEntry* m = macs;
-	while (m && strcmp(naam, m->naam)) m = m->next;
-	if (!m) return 0;
+	if (!used[naam[0] & 127]) return 0;
+	auto mac_it = macs.find(naam);
+	if (macs.end() == mac_it) return 0;
 	// macro found, emit it, prepare temporary instance label base
 	char* omacrolabp = macrolabp;
 	char labnr[LINEMAX], ml[LINEMAX];
@@ -923,7 +882,7 @@ int CMacroTable::Emit(char* naam, char*& p) {
 	}
 	// parse argument values
 	CDefineTableEntry* odefs = MacroDefineTable.getdefs();
-	CStringsList* a = m->args;
+	CStringsList* a = mac_it->second.args;
 	while (a) {
 		char* n = ml;
 		const bool lastArg = NULL == a->next;
@@ -946,7 +905,7 @@ int CMacroTable::Emit(char* naam, char*& p) {
 	ListFile();
 	++listmacro;
 	CStringsList* olijstp = lijstp;
-	lijstp = m->body;
+	lijstp = mac_it->second.body;
 	++lijst;
 	STRCPY(ml, LINEMAX, line);
 	sourcePosStack.push_back(TextFilePos());
