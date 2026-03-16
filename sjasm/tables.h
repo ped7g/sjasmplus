@@ -139,11 +139,14 @@ struct TemporaryLabel {
 	TemporaryLabel(aint number, aint address);
 };
 
+// internal temporary label for directive DP (negative int, so user can't define same)
+constexpr const aint DP_HELPER_LABEL = -0x3FFF'FFFF;
+
 class CTemporaryLabelTable {
 public:
+	CTemporaryLabelTable() = default;
 	CTemporaryLabelTable(const CTemporaryLabelTable&) = delete;
 	CTemporaryLabelTable& operator=(CTemporaryLabelTable const &) = delete;
-	CTemporaryLabelTable();
 	void InitPass();
 	const TemporaryLabel* seekForward(const aint labelNumber) const;
 	const TemporaryLabel* seekBack(const aint labelNumber) const;
@@ -151,9 +154,7 @@ public:
 private:
 	typedef std::vector<TemporaryLabel> temporary_labels_t;
 	temporary_labels_t labels;
-	temporary_labels_t::size_type refresh;
-	bool insertImpl(const aint labelNumber);
-	bool refreshImpl(const aint labelNumber);
+	temporary_labels_t nextPassLabels;
 };
 
 class CStringsList {
@@ -281,8 +282,7 @@ public:
 
 class CStructure {
 public:
-	char* naam, * id;
-	int global;
+	char* naam;
 	int maxAlignment;
 	aint noffset;
 	void AddLabel(char*);
@@ -295,7 +295,7 @@ public:
 	CStructure* next;
 	CStructure(const CStructure&) = delete;
 	CStructure& operator=(CStructure const &) = delete;
-	CStructure(const char* nnaam, char* nid, int no, int ngl, CStructure* p);
+	CStructure(const char* nnaam, int no, CStructure* p);
 	~CStructure();
 private:
 	CStructureEntry1* mnf, * mnl;
@@ -306,14 +306,14 @@ private:
 
 class CStructureTable {
 public:
-	CStructure* Add(char* naam, int no, int gl);
+	CStructure* Add(const char* naam, int no);
 	void ReInit();
 	CStructureTable(const CStructureTable&) = delete;
 	CStructureTable& operator=(CStructureTable const &) = delete;
 	CStructureTable();
 	~CStructureTable();
 	CStructure* zoek(const char*, int);
-	int FindDuplicate(char*);
+	int FindDuplicate(const char*);
 	int Emit(char*, char*, char*&, int);
 private:
 	static aint ParseDesignedAddress(char* &p);

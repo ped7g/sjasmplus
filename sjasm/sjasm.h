@@ -81,6 +81,7 @@ namespace Options {
 	extern std::filesystem::path ListingFName;
 	extern std::filesystem::path ExportFName;
 	extern std::filesystem::path DestinationFName;
+	extern std::filesystem::path HEXFName;
 	extern std::filesystem::path RAWFName;
 	extern std::filesystem::path UnrealLabelListFName;
 	extern std::filesystem::path CSpectMapFName;
@@ -100,6 +101,7 @@ namespace Options {
 	extern bool IsLongPtr;
 	extern bool SortSymbols;
 	extern bool IsBigEndian;		// true when hosting platform is big-endian
+	extern bool DeleteOnError;
 
 	// emit virtual labels in LABELSLIST, that have only 64ki address and no page
 	// format is then `:ADDR label`, starting from colon, then 16bit address, then label.

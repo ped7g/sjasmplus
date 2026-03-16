@@ -1,0 +1,4 @@
+$MEMCHECK "$EXE" "${options[@]}" "$file_asm"
+# only .asm and .cli file should be in the directory, everything else should have been cleaned
+[[ 2 -eq $(ls -A | wc -l) ]] ;
+last_result=$?

@@ -171,6 +171,7 @@ typedef std::map<const char*, WarningEntry> messages_map;
 
 const char* W_NO_RAMTOP = "noramtop";
 const char* W_DEV_RAMTOP = "devramtop";
+const char* W_FILE_ORG = "fileorg";
 const char* W_DISPLACED_ORG = "displacedorg";
 const char* W_ORG_PAGE = "orgpage";
 const char* W_FWD_REF = "fwdref";
@@ -188,6 +189,7 @@ const char* W_REL_DIVERTS = "reldiverts";
 const char* W_REL_UNSTABLE = "relunstable";
 const char* W_DISP_MEM_PAGE = "dispmempage";
 const char* W_BP_FILE = "bpfile";
+const char* W_SLD_SWAP = "sldswap";
 const char* W_OUT0 = "out0";
 const char* W_BACKSLASH = "backslash";
 const char* W_OPKEYWORD = "opkeyword";
@@ -196,6 +198,7 @@ const char* W_FAKE = "fake";
 const char* W_ENABLE_ALL = "all";
 const char* W_ZERO_DECIMAL = "decimalz";
 const char* W_NON_ZERO_DECIMAL = "decimaln";
+const char* W_SHORT_BLOCK = "shortblock";
 
 static messages_map w_texts = {
 	{ W_NO_RAMTOP,
@@ -208,6 +211,12 @@ static messages_map w_texts = {
 		{ true,
 			"[DEVICE] this device was already opened with different RAMTOP value",
 			"Warn when different <ramtop> is used for same device."
+		}
+	},
+	{ W_FILE_ORG,
+		{ true,
+			"ORG does not pad output file to reach target address, bytes skipped",
+			"Warn about ORG skipping bytes in OUTPUT/raw/TAPOUT file."
 		}
 	},
 	{ W_DISPLACED_ORG,
@@ -312,6 +321,12 @@ static messages_map w_texts = {
 			"Warn when SETBREAKPOINT is used without breakpoint file."
 		}
 	},
+	{ W_SLD_SWAP,
+		{ true,
+			"SLDOPT swapon/swapoff unevenly paired within macro/include",
+			"Warn when SLD swap on/off is uneven per macro/include."
+		}
+	},
 	{ W_OUT0,
 		{ true,
 			"'out (c),0' is unstable, on CMOS based chips it does `out (c),255`",
@@ -353,6 +368,12 @@ static messages_map w_texts = {
 		{ true,
 			"decimal part is ignored",
 			"Warn when numeric constant has non zero decimal part"
+		}
+	},
+	{ W_SHORT_BLOCK,
+		{ true,
+			"init data for block truncated to length",
+			"Warn when block's length is shorter than init data"
 		}
 	},
 	{ W_ENABLE_ALL,

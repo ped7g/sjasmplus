@@ -20,42 +20,31 @@ relocator_code:
     ASSERT 0 < relocate_count   ; (for zero relocation_count the relocator is not needed!)
     ; BASIC sets BC to the address of start (after "RANDOMIZE USR x" BC=x upon entry)
         di
-    ; preserve current SP into IX
-        ld      ix,0
-        add     ix,sp
+    ; preserve current SP into DE
+        ld      hl,0
+        add     hl,sp
+        ex      de,hl
     ; set SP to the relocation table data
         ld      hl,relocator_table-relocator_code   ; offset from start to the table
+.end_with_overflow:         ; machine code 09 F9 -> high byte relocation sets carry at end for any BC >= 0x0800
         add     hl,bc                               ; absolute address of table
         ld      sp,hl
-    ; process the full table of relocation data (A + A' is counter of relocation values)
-        ld      a,1+high relocate_count
-        ex      af,af
-        ld      a,1+low relocate_count
-        jr      .relocate_loop_entry
-.relocate_loop_outer:
-        ex      af,af
+    ; process the full table of relocation data (until `add hl,bc : ld sp,hl` is damaged setting carry flag)
 .relocate_loop:
     ; relocate single record from the relocate table
         pop     hl
         add     hl,bc       ; HL = address of machine code to modify
-        ld      e,(hl)
+        ld      a,(hl)      ; relocate the value (low byte)
+        add     a,c
+        ld      (hl),a      ; patch the machine code in memory (low byte)
         inc     hl
-        ld      d,(hl)      ; DE = value to modify
+        ld      a,(hl)      ; relocate the value (high byte)
+        adc     a,b         ; this should never overflow for correct relocation
+        ld      (hl),a      ; patch the machine code in memory (high byte)
+    ; loop until the .end_with_overflow record was processed, where the last `adc a,b` sets CF
+        jr      nc,.relocate_loop
         ex      de,hl
-        add     hl,bc       ; relocate the value
-        ex      de,hl
-        ld      (hl),d      ; patch the machine code in memory
-        dec     hl
-        ld      (hl),e
-.relocate_loop_entry:
-    ; loop until all "relocate_count" records were processed
-        dec     a
-        jr      nz,.relocate_loop
-        ex      af,af
-        dec     a
-        jr      nz,.relocate_loop_outer
-    ; restore SP
-        ld      sp,ix
+        ld      sp,hl       ; restore SP
 ; end of relocator
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -139,6 +128,8 @@ vram_line_first_byte = vram_line_first_byte + $100
 
 relocator_table:
     RELOCATE_TABLE
+    ASSERT $F909 = {$8000+relocator_code.end_with_overflow} ; expected machine code `09 F9`
+    DW norel relocator_code.end_with_overflow           ; address of 09 F9 machine code to terminate relocator loop
 
 ; total size of code block
 code_size   EQU     $ - relocator_code

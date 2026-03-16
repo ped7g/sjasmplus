@@ -11,15 +11,15 @@
 # make DEBUG=1 LUA_COVERAGE=1 coverage		- to produce build/debug/coverage/* files by running the tests
 # make COVERALLS_SERVICE=1 DEBUG=1 coverage	- to produce coverage data and upload them to https://coveralls.io/
 # make CFLAGS_EXTRA='-m32' LDFLAGS='-ldl -m32'  - to builds 32b linux executable
-# make KEEP_SYMBOLS=1 CC=clang-19 CXX=clang++-19 CFLAGS_EXTRA='-fsanitize=address' LDFLAGS='-ldl -fsanitize=address' - ASAN build
-# make KEEP_SYMBOLS=1 CC=clang-19 CXX=clang++-19 CFLAGS_EXTRA='-fsanitize=undefined' LDFLAGS='-ldl -fsanitize=undefined' - UBSAN build
+# make KEEP_SYMBOLS=1 CC=clang-20 CXX=clang++-20 CFLAGS_EXTRA='-fsanitize=address' LDFLAGS='-ldl -fsanitize=address' - ASAN build
+# make KEEP_SYMBOLS=1 CC=clang-20 CXX=clang++-20 CFLAGS_EXTRA='-fsanitize=undefined' LDFLAGS='-ldl -fsanitize=undefined' - UBSAN build
 # to cross-compile windows exe try to use Makefile.win instead, this Makefile is now too much linux/posix only
 # make callgrind TEST=integration KEEP_SYMBOLS=1 CFLAGS_EXTRA=-g && kcachegrind callgrind.out/cgo.* - callgrind profiling
 
 EXE_BASE_NAME=sjasmplus
 
 # Set version, dir and src.tar.xz filename
-VERSION?=1.21.0
+VERSION?=1.22.0
 SRCTARFILE?=$(EXE_BASE_NAME)-$(VERSION)-src.tar.xz
 SRCTARDIR?=$(EXE_BASE_NAME)-$(VERSION)
 
@@ -71,7 +71,7 @@ RMSRCTARDIR?=rm -rf ../$(SRCTARDIR)
 
 BUILD_DIR=build
 
-LUA_VER?=5.4
+LUA_VER?=5.5
 LUA_LIBNAME?=lua$(LUA_VER)
 
 SUBDIR_BASE=sjasm
@@ -134,26 +134,26 @@ define object_files_ut
 endef
 
 # sjasmplus files
-SRCS:=$(wildcard $(SUBDIR_BASE)/*.c) $(wildcard $(SUBDIR_BASE)/*.cpp)
+SRCS:=$(sort $(wildcard $(SUBDIR_BASE)/*.c) $(wildcard $(SUBDIR_BASE)/*.cpp))
 OBJS:=$(call object_files,$(SRCS))
 OBJS_UT:=$(call object_files_ut,$(SRCS))
 
 ifeq ($(USE_BUNDLED_LUA), 1)
 # liblua files
-LUASRCS:=$(wildcard $(SUBDIR_LUA)/*.c)
+LUASRCS:=$(sort $(wildcard $(SUBDIR_LUA)/*.c))
 LUAOBJS:=$(call object_files,$(LUASRCS))
 LUAOBJS_UT:=$(call object_files_ut,$(LUASRCS))
 endif
 
 # crc32c files
-CRC32CSRCS:=$(wildcard $(SUBDIR_CRC32C)/*.cpp)
+CRC32CSRCS:=$(sort $(wildcard $(SUBDIR_CRC32C)/*.cpp))
 CRC32COBJS:=$(call object_files,$(CRC32CSRCS))
 CRC32COBJS_UT:=$(call object_files_ut,$(CRC32CSRCS))
 
 # UnitTest++ files
-UTPPSRCS:=$(wildcard $(SUBDIR_UT)/UnitTest++/*.cpp) $(wildcard $(SUBDIR_UT)/UnitTest++/Posix/*.cpp)
+UTPPSRCS:=$(sort $(wildcard $(SUBDIR_UT)/UnitTest++/*.cpp) $(wildcard $(SUBDIR_UT)/UnitTest++/Posix/*.cpp))
 UTPPOBJS:=$(call object_files,$(UTPPSRCS))
-TESTSSRCS:=$(wildcard $(SUBDIR_TESTS)/*.cpp)
+TESTSSRCS:=$(sort $(wildcard $(SUBDIR_TESTS)/*.cpp))
 TESTSOBJS:=$(call object_files_ut,$(TESTSSRCS))
 
 ALL_OBJS:=$(OBJS) $(CRC32COBJS)
@@ -211,7 +211,7 @@ upx: $(BUILD_EXE)
 	EXE="$(CURDIR)/$(EXE_BASE_NAME)" $(BASH) ContinuousIntegration/test_folder_tests.sh
 
 # make all sjasm/*.o depend on all sjasm/*.h files (no subtle dependencies, all by all affected)
-$(OBJS): $(wildcard $(SUBDIR_BASE)/*.h)
+$(OBJS): $(sort $(wildcard $(SUBDIR_BASE)/*.h))
 
 $(BUILD_EXE): $(ALL_OBJS)
 	$(CXX) -o $(BUILD_EXE) $(CXXFLAGS) $(ALL_OBJS) $(LDFLAGS)
@@ -277,7 +277,7 @@ endif
 
 docs: $(SUBDIR_DOCS)/documentation.html ;
 
-$(SUBDIR_DOCS)/documentation.html: Makefile $(wildcard $(SUBDIR_DOCS)/*.xml) $(wildcard $(SUBDIR_DOCS)/*.xsl)
+$(SUBDIR_DOCS)/documentation.html: Makefile $(sort $(wildcard $(SUBDIR_DOCS)/*.xml) $(wildcard $(SUBDIR_DOCS)/*.xsl))
 	$(DOCBOOKGEN) \
 		--stringparam html.stylesheet docbook.css \
 		--stringparam generate.toc "book toc" \

@@ -130,6 +130,16 @@ static void dirDZ() {
 	getBytesWithCheck(0, 0, true);
 }
 
+static void dirDP() {
+	// calculate size of the string by subtracting current address + 1 from value of helper temporary label
+	const auto endLabel = TemporaryLabelTable.seekForward(DP_HELPER_LABEL);
+	const aint dpSize = (nullptr != endLabel) ? (endLabel->value - (CurAddress + 1)) : 0;
+	if ((LASTPASS == pass) && (nullptr == endLabel)) Error("dirDP(): please, contact the author of this program.", nullptr, FATAL);
+	EmitByte(dpSize);											// emit the size byte
+	getBytesWithCheck();										// use regular DB-like parsing for string body
+	TemporaryLabelTable.InsertRefresh(DP_HELPER_LABEL);			// insert the forward helper temporary label after it
+}
+
 static void dirABYTE() {
 	aint add;
 	if (ParseExpressionNoSyntaxError(lp, add)) {
@@ -242,15 +252,29 @@ static void dirDH() {
 }
 
 static void dirBLOCK() {
-	aint teller,val = 0;
+	int dirDx[130];
+	aint teller = 0, val = 0, initByteCount = 0, emitMaxToListing = 4;
 	if (ParseExpressionNoSyntaxError(lp, teller)) {
 		if (teller < 0) {
 			Warning("Negative BLOCK?");
 		}
 		if (comma(lp)) {
-			if (ParseExpression(lp, val)) check8(val);
+			// Parse operand list using GetBytes (like DEFB does)
+			initByteCount = GetBytes(lp, dirDx, 0, 0);
+			if (teller < initByteCount) {		// Operands exceed DEFS size - truncate and error
+				WarningById(W_SHORT_BLOCK, teller);
+				initByteCount = teller;
+				if (initByteCount < 0) initByteCount = 0;
+				dirDx[initByteCount] = -1;		// truncate init data
+			}
+			if (0 < initByteCount) {			// emit the explicit init bytes first (if any are available)
+				EmitBytes(dirDx);
+				val = dirDx[initByteCount - 1];	// last explicit byte is new filler value
+				emitMaxToListing -= (initByteCount & 3);
+			}
 		}
-		EmitBlock(val, teller);
+		// emit remaining bytes set with filler
+		EmitBlock(val, teller - initByteCount, false, emitMaxToListing);
 	} else {
 		Error("[BLOCK] Syntax Error in <length>", lp, SUPPRESS);
 	}
@@ -286,6 +310,10 @@ static void dirORG() {
 	}
 	// crop (with warning) address in device or non-longptr mode to 16bit address range
 	if ((DeviceID || !Options::IsLongPtr) && !check16u(val)) val &= 0xFFFF;
+	// warn about jump in address in raw/output mode
+	if (DidWriteOutputByte() && (CurAddress != val)) {
+		WarningById(W_FILE_ORG, val - CurAddress);
+	}
 	CurAddress = val;
 	if (DISP_NONE != PseudoORG) WarningById(W_DISPLACED_ORG);
 	if (!DeviceID) return;
@@ -1030,6 +1058,34 @@ static void dirSAVEAMSDOS() {
 	}
 }
 
+static void dirSAVEHEX() {
+	if (!DeviceID) {
+		Error("SAVEHEX works in real device emulation mode (See DEVICE)");
+		SkipToEol(lp);
+		return;
+	}
+	bool exec = (LASTPASS == pass);
+	const std::filesystem::path fnaam = GetOutputFileName(lp);
+	aint args[] = { -1, -1, -1 };	// address, size, start
+	const bool optional[] = {false, false, true};
+	if (!anyComma(lp) || !getIntArguments<3>(lp, args, optional) || !fnaam.has_filename()) {
+		Error("[SAVEHEX] expected syntax is <filename>,<address>,<size>[,<start = -1>]", bp, SUPPRESS);
+		return;
+	}
+	aint &address = args[0], &size = args[1], &start = args[2];
+	if (address < 0 || size < 1 || 0x10000 < address + size) {
+		Error("[SAVEHEX] [address, size] region outside of 64ki", bp);
+		return;
+	}
+	if (start < -1 || 0xFFFF < start) {
+		ErrorInt("[SAVEHEX] start should be -1 as OFF or uint16", start);
+		start = -1;
+	}
+	if (exec && !SaveHex(fnaam, address, size, start)) {
+		Error("[SAVEHEX] Error writing file (Disk full?)", bp, IF_FIRST);
+	}
+}
+
 static void dirSAVEHOB() {
 	if (!DeviceID || pass != LASTPASS) {
 		if (!DeviceID) Error("SAVEHOB only allowed in real device emulation mode (See DEVICE)");
@@ -1303,8 +1359,10 @@ static void dirBPLIST() {
 		type = BPSF_ZESARUX;
 	} else if (cmphstr(lp, "mame")) {
 		type = BPSF_MAME;
+	} else if (cmphstr(lp, "fuse")) {
+		type = BPSF_FUSE;
 	} else if (!SkipBlanks()) {
-		Warning("[BPLIST] invalid breakpoints file type (use \"unreal\" or \"zesarux\")", lp, W_EARLY);
+		Warning("[BPLIST] invalid breakpoints file type (valid: \"unreal\", \"zesarux\", \"mame\", \"fuse\")", lp, W_EARLY);
 	}
 	OpenBreakpointsFile(fName, type);
 }
@@ -1314,14 +1372,23 @@ static void dirSETBREAKPOINT() {
 		SkipToEol(lp);
 		return;
 	}
-	aint val = 0;
-	if (SkipBlanks(lp)) {		// without any expression do the "$" breakpoint
-		WriteBreakpoint(CurAddress);
-	} else if (ParseExpressionNoSyntaxError(lp, val)) {
-		WriteBreakpoint(val);
-	} else {
-		Error("[SETBREAKPOINT] Syntax error", bp, SUPPRESS);
+	aint val = CurAddress;
+	delim_string_t delimTxt = {};
+	if (!SkipBlanks(lp) && (DT_NONE == DelimiterAnyBegins(lp, false))) {	// not a condition, parse as address
+		if (!ParseExpressionNoSyntaxError(lp, val)) {
+			Error("[SETBREAKPOINT] Syntax error", bp, SUPPRESS);
+			return;
+		} else if (anyComma(lp) && !SkipBlanks(lp)) {						// condition can be second arg
+			if (DT_NONE != DelimiterAnyBegins(lp, false)) delimTxt = GetDelimitedStringEx(lp);
+		}
+	} else {																// condition delimited string follows
+		delimTxt = GetDelimitedStringEx(lp);
 	}
+	if (!SkipBlanks(lp)) {
+		Error("[SETBREAKPOINT] Syntax error", lp, SUPPRESS);
+		return;
+	}
+	WriteBreakpoint(val, (DT_NONE != delimTxt.second && !delimTxt.first.empty()) ? delimTxt.first.c_str() : nullptr);
 }
 
 /*void dirTEXTAREA() {
@@ -1487,6 +1554,36 @@ static void dirINCLUDE() {
 		donotlist = 1;
 	} else {
 		Error("[INCLUDE] empty filename", bp);
+	}
+}
+
+static void dirHEXOUT() {
+	if (LASTPASS != pass) {
+		SkipToEol(lp);
+	} else {
+		const std::filesystem::path fnaam = GetOutputFileName(lp);
+		if (fnaam.has_filename())	OpenHex(fnaam);
+		else						Error("[HEXOUT] invalid filename", fnaam.string().c_str());
+	}
+}
+
+static void dirHEXEND() {
+	if (LASTPASS != pass) {
+		SkipToEol(lp);
+		return;
+	}
+	char* p = lp;
+	aint start = StartAddress;				// global state StartAddress is default when no/invalid start is provided
+	if (ParseExpression(lp, start)) {		// -1 is explicit "start address OFF"
+		if (start < -1 || 0xFFFF < start) {
+			ErrorInt("[HEXEND] Invalid address", start, IF_FIRST);
+			start = StartAddress;
+		}
+	} else {
+		lp = p;
+	}
+	if (!CloseHex(start)) {
+		Error("[HEXEND] HEX output was not active");
 	}
 }
 
@@ -1765,18 +1862,14 @@ static void dirSHELLEXEC() {
 
 static void dirSTRUCT() {
 	CStructure* st;
-	int global = 0;
 	aint offset = 0;
-	char* naam;
 	SkipBlanks();
-	if (*lp == '@') {
-		++lp; global = 1;
-	}
-
-	if (!(naam = GetID(lp)) || !strlen(naam)) {
-		Error("[STRUCT] Illegal structure name", lp, SUPPRESS);
+	std::unique_ptr<char[]> validLabel(ValidateLabel(lp, false, true));
+	if (!validLabel) {	// ValidateLabel() reports illegal name as "label" ... welp... good enough.
+		SkipToEol(lp);
 		return;
 	}
+	while (islabchar(*lp)) ++lp;	// advance lp beyond parsed label (valid chars only)
 	if (comma(lp)) {
 		IsLabelNotFound = false;
 		if (!ParseExpressionNoSyntaxError(lp, offset)) {
@@ -1790,17 +1883,17 @@ static void dirSTRUCT() {
 	if (!SkipBlanks()) {
 		Error("[STRUCT] syntax error, unexpected", lp);
 	}
-	st = StructureTable.Add(naam, offset, global);
+	st = StructureTable.Add(validLabel.get(), offset);	// create structure and start parsing members
 	ListFile();
 	while (ReadLine()) {
-		lp = line; /*if (White()) { SkipBlanks(lp); if (*lp=='.') ++lp; if (cmphstr(lp,"ends")) break; }*/
+		lp = line;
 		SkipBlanks(lp);
 		if (*lp == '.') {
 			++lp;
 		}
 		if (cmphstr(lp, "ends")) {
 			++CompiledCurrentLine;
-			if (st) st->deflab();
+			if (st) st->deflab();		// create structure symbols from members and struct itself (size)
 			lp = ReplaceDefine(lp);		// skip any empty substitutions and comments
 			substitutedLine = line;		// override substituted listing for ENDS
 			return;
@@ -2124,8 +2217,8 @@ static void dirDEVICE() {
 			if (!ParseExpressionNoSyntaxError(lp, ramtop)) {
 				Error("[DEVICE] Syntax error", bp); return;
 			}
-			if (ramtop < 0x5D00 || 0xFFFF < ramtop) {
-			  	ErrorInt("[DEVICE] valid range for RAMTOP is $5D00..$FFFF", ramtop); return;
+			if ((ramtop < 0x5D00 || 0xFFFF < ramtop) && (-1 != ramtop)) {
+				ErrorInt("[DEVICE] valid range for RAMTOP is $5D00..$FFFF", ramtop); return;
 			}
 		}
 		// if (1 == deviceDirectivesCount && Device) -> device was already set globally, skip SetDevice
@@ -2141,12 +2234,16 @@ static void dirDEVICE() {
 
 static void dirSLDOPT() {
 	SkipBlanks(lp);
-	if (cmphstr(lp, "COMMENT")) {
+	if (cmphstr(lp, "comment")) {
 		do {
 			SldAddCommentKeyword(GetID(lp));
 		} while (!SkipBlanks(lp) && anyComma(lp));
+	} else if (cmphstr(lp, "swapon")) {
+		++sldSwapSrcPos;
+	} else if (cmphstr(lp, "swapoff")) {
+		--sldSwapSrcPos;
 	} else {
-		Error("[SLDOPT] Syntax error in <type> (valid is only COMMENT)", lp, SUPPRESS);
+		Error("[SLDOPT] Syntax error in <type> (valid: COMMENT, SWAPON, SWAPOFF)", lp, SUPPRESS);
 	}
 }
 
@@ -2197,6 +2294,7 @@ void InsertDirectives() {
 	DirectivesTable.insertd(".save3dos", dirSAVE3DOS);
 	DirectivesTable.insertd(".saveamsdos", dirSAVEAMSDOS);
 	DirectivesTable.insertd(".savecpr", dirSAVECPR);
+	DirectivesTable.insertd(".savehex", dirSAVEHEX);
 	DirectivesTable.insertd(".shellexec", dirSHELLEXEC);
 /*#ifdef WIN32
 	DirectivesTable.insertd(".winexec", dirWINEXEC);
@@ -2207,6 +2305,8 @@ void InsertDirectives() {
 	DirectivesTable.insertd(".ifnused", dirIFNUSED);
 	DirectivesTable.insertd(".ifdef", dirIFDEF);
 	DirectivesTable.insertd(".ifndef", dirIFNDEF);
+	DirectivesTable.insertd(".hexout", dirHEXOUT);
+	DirectivesTable.insertd(".hexend", dirHEXEND);
 	DirectivesTable.insertd(".output", dirOUTPUT);
 	DirectivesTable.insertd(".outend", dirOUTEND);
 	DirectivesTable.insertd(".tapout", dirTAPOUT);
@@ -2220,10 +2320,12 @@ void InsertDirectives() {
 	DirectivesTable.insertd(".dz", dirDZ);
 	DirectivesTable.insertd(".db", dirBYTE);
 	DirectivesTable.insertd(".dm", dirBYTE);
+	DirectivesTable.insertd(".dp", dirDP);
 	DirectivesTable.insertd(".dw", dirWORD);
 	DirectivesTable.insertd(".ds", dirBLOCK);
 	DirectivesTable.insertd(".dd", dirDWORD);
 	DirectivesTable.insertd(".defb", dirBYTE);
+	DirectivesTable.insertd(".defp", dirDP);
 	DirectivesTable.insertd(".defw", dirWORD);
 	DirectivesTable.insertd(".defs", dirBLOCK);
 	DirectivesTable.insertd(".defd", dirDWORD);

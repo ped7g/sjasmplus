@@ -42,6 +42,7 @@ enum EWStatus { W_ALL, W_EARLY, W_PASS3, W_PASS03 };
 
 extern const char* W_NO_RAMTOP;
 extern const char* W_DEV_RAMTOP;
+extern const char* W_FILE_ORG;
 extern const char* W_DISPLACED_ORG;
 extern const char* W_ORG_PAGE;
 extern const char* W_FWD_REF;
@@ -59,6 +60,7 @@ extern const char* W_REL_DIVERTS;
 extern const char* W_REL_UNSTABLE;
 extern const char* W_DISP_MEM_PAGE;
 extern const char* W_BP_FILE;
+extern const char* W_SLD_SWAP;
 extern const char* W_OUT0;
 extern const char* W_BACKSLASH;
 extern const char* W_OPKEYWORD;
@@ -67,6 +69,7 @@ extern const char* W_FAKE;
 extern const char* W_ENABLE_ALL;
 extern const char* W_ZERO_DECIMAL;
 extern const char* W_NON_ZERO_DECIMAL;
+extern const char* W_SHORT_BLOCK;
 
 extern TextFilePos skipEmitMessagePos;
 extern const char* extraErrorWarningPrefix;

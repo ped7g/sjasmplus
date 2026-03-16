@@ -61,7 +61,7 @@ labels_syntax_and_find.asm(42): error: Label not found: mod1.nested.nest2unique
  54   3170                  ENDMODULE
  55   3170
  56   3170                  MODULE mod2
- 56   3170                ORG $3332
+ 56   3170                ORG $3332 ; fileorg-ok
  57   3332              label:
  58   3332 29                   add hl,hl
  59   3333              .local:
@@ -117,7 +117,7 @@ labels_syntax_and_find.asm(95): error: Label not found: mod2.nested.nest1unique
 106   3372
 107   3372                  ENDMODULE
 108   3372
-109   3372                  ORG $3534
+109   3372                  ORG $3534 ; fileorg-ok
 110   3534              label:
 111   3534 2B               dec hl
 112   3535              .local:
@@ -159,24 +159,24 @@ labels_syntax_and_find.asm(138): error: Label not found: nested.label.local
 144   356A              unique:
 145   356A 2D               dec l
 146   356B
-labels_syntax_and_find.asm(147): error: Invalid labelname: .invalidLabelName
+labels_syntax_and_find.asm(147): error: Invalid character at start of labelname: .invalidLabelName
 147   356B              ..invalidLabelName:
-labels_syntax_and_find.asm(148): error: Invalid labelname: .invalidLabelName
+labels_syntax_and_find.asm(148): error: Invalid character at start of labelname: .invalidLabelName
 148   356B              @.invalidLabelName:
-labels_syntax_and_find.asm(149): error: Invalid labelname: @invalidLabelName
+labels_syntax_and_find.asm(149): error: Invalid character at start of labelname: @invalidLabelName
 149   356B              .@invalidLabelName:
-labels_syntax_and_find.asm(150): error: Invalid labelname: 1nvalidLabelName
+labels_syntax_and_find.asm(150): error: Invalid character at start of labelname: 1nvalidLabelName
 150   356B              .1nvalidLabelName:
-labels_syntax_and_find.asm(151): error: Invalid labelname: 1nvalidLabelName
+labels_syntax_and_find.asm(151): error: Invalid character at start of labelname: 1nvalidLabelName
 151   356B              @1nvalidLabelName:
-labels_syntax_and_find.asm(152): error: Invalid labelname: @1nvalidLabelName
+labels_syntax_and_find.asm(152): error: Invalid character at start of labelname: @1nvalidLabelName
 152   356B              .@1nvalidLabelName:
-labels_syntax_and_find.asm(153): error: Invalid labelname: .1nvalidLabelName
+labels_syntax_and_find.asm(153): error: Invalid character at start of labelname: .1nvalidLabelName
 153   356B              @.1nvalidLabelName:
 labels_syntax_and_find.asm(154): error: Invalid temporary label (not a number): 1nvalidLabelName
 labels_syntax_and_find.asm(154): error: Temporary label not found: 1B
 154   356B 20 00        1nvalidLabelName: jr  nz,1B
-labels_syntax_and_find.asm(155): error: Invalid labelname: Inv&lidL&belN&me
+labels_syntax_and_find.asm(155): error: Invalid character after labelname: Inv&lidL&belN&me
 155   356D              Inv&lidL&belN&me
 155   356D
 labels_syntax_and_find.asm(156): error: Number labels are allowed as address labels only, not for DEFL/=/EQU: 100
@@ -222,7 +222,7 @@ labels_syntax_and_find.asm(167): error: Unexpected: cpl
 182   3570
 183   3570                  ; do another module setup to test the EXIST searching from inner blocks
 184   3570                  MODULE mod3
-184   3570                ORG $4156
+184   3570                ORG $4156 ; fileorg-ok
 185   4156                      ; check global ones (outside of current module)
 186   4156 06                   DB  -(exist label + exist label.local + exist unique + exist mod1.label + exist mod1.label.local + exist mod1.mod1unique)  ; == 6 (no error)
 187   4157 06                   DB  -(exist @label + exist @label.local + exist @unique + exist @mod1.label + exist @mod1.label.local + exist @mod1.mod1unique)  ; == 6 (no error)
@@ -256,18 +256,15 @@ labels_syntax_and_find.asm(211): error: Unexpected: $t
 211   4165 00 00            DW exist exi$t  ; unexpected "$t" ("exi") is picked up as label to check existence = 0
 labels_syntax_and_find.asm(212): error: Unexpected: @@exi
 212   4167 5F 41            DW exist @@exi  ; unexpected "@@exi"
-labels_syntax_and_find.asm(213): error: Invalid labelname: )
-labels_syntax_and_find.asm(213): error: Unexpected: ()
+labels_syntax_and_find.asm(213): error: Invalid character at start of labelname: )
 213   4169 5F 41            DW exist()      ; invalid label name + unexpected
-labels_syntax_and_find.asm(214): error: Invalid labelname: 3xist)
-labels_syntax_and_find.asm(214): error: Unexpected: (3xist)
+labels_syntax_and_find.asm(214): error: Invalid character at start of labelname: 3xist)
 214   416B 5F 41            DW exist(3xist) ; invalid label name + unexpected
 labels_syntax_and_find.asm(215): error: Unexpected: (e\ist)
 215   416D 5F 41            DW exist(e\ist) ; unexpected "(e\ist)" - fails as argument for exists, fallback to symbol eval + extra chars
 labels_syntax_and_find.asm(216): error: Unexpected: (exi$t)
 216   416F 5F 41            DW exist(exi$t) ; unexpected "(exi$t)" - fails as argument for exists, fallback to symbol eval + extra chars
-labels_syntax_and_find.asm(217): error: Invalid labelname: @exi)
-labels_syntax_and_find.asm(217): error: Unexpected: (@@exi)
+labels_syntax_and_find.asm(217): error: Invalid character at start of labelname: @exi)
 217   4171 5F 41            DW exist(@@exi) ; invalid label name + unexpected
 218   4173
 labels_syntax_and_find.asm(219): warning: Label has different value in pass 3: previous value 16735 not equal 16755

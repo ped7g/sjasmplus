@@ -37,12 +37,12 @@ static void PrintHelpMain() {
 	// Please keep help lines at most 79 characters long (cursor at column 88 after last char)
 	//     |<-- ...8901234567890123456789012345678901234567890123456789012... 80 chars -->|
 	_COUT "Based on code of SjASM by Sjoerd Mastijn (http://www.xl2s.tk)" _ENDL;
-	_COUT "Copyright 2019-2025 by Peter Helcmanovsky and all other participants" _ENDL;
+	_COUT "Copyright 2019-2026 by Peter Helcmanovsky and all other participants" _ENDL;
 	//_COUT "Patches by Antipod / boo_boo / PulkoMandy and others" _ENDL;
 	//_COUT "Tidy up by Tygrys / UB880D / Cizo / mborik / z00m" _ENDL;
 	_COUT "\nUsage:\nsjasmplus [options] sourcefile(s)" _ENDL;
 	_COUT "\nOption flags as follows:" _ENDL;
-	_COUT "  -h or --help[=warnings]  Help information (you see it)" _ENDL;
+	_COUT "  -h or --help[=warnings|=syntax]" _ENDL;
 	_COUT "  --zxnext[=cspect]        Enable ZX Spectrum Next Z80 extensions (Z80N)" _ENDL;
 	_COUT "  --i8080                  Limit valid instructions to i8080 only (+ no fakes)" _ENDL;
 	_COUT "  --lr35902                Sharp LR35902 CPU instructions mode (+ no fakes)" _ENDL;
@@ -53,12 +53,14 @@ static void PrintHelpMain() {
 	_COUT "  --lstlab[=sort]          Append [sorted] symbol table to listing" _ENDL;
 	_COUT "  --sym=<filename>         Save symbol table to <filename>" _ENDL;
 	_COUT "  --exp=<filename>         Save exports to <filename> (see EXPORT pseudo-op)" _ENDL;
-	//_COUT "  --autoreloc              Switch to autorelocation mode. See more in docs." _ENDL;
+	_COUT "  --hex=<filename>         Intel HEX saved to <filename> (- is STDOUT)" _ENDL;
 	_COUT "  --raw=<filename>         Machine code saved also to <filename> (- is STDOUT)" _ENDL;
 	_COUT "  --sld[=<filename>]       Save Source Level Debugging data to <filename>" _ENDL;
+	_COUT "  --cleanonerror           Remove newly created binary outputs upon error" _ENDL;
 	_COUT " Note: use OUTPUT, LUA/ENDLUA and other pseudo-ops to control output" _ENDL;
 	_COUT " Logging:" _ENDL;
 	_COUT "  --nologo                 Do not show startup message" _ENDL;
+	_COUT "  --version                Basic info (with --nologo only raw version string)" _ENDL;
 	_COUT "  --msg=[all|war|err|none|lst|lstlab]" _ENDL;
 	_COUT "                           Stderr messages verbosity (\"all\" is default)" _ENDL;
 	_COUT "  --fullpath[=on|rel|off]  Input file paths: full | CWD relative | name only" _ENDL;
@@ -66,12 +68,36 @@ static void PrintHelpMain() {
 	_COUT " Other:" _ENDL;
 	_COUT "  -D<NAME>[=<value>] or --define <NAME>[=<value>]" _ENDL;
 	_COUT "                           Define <NAME> as <value>" _ENDL;
-	_COUT "  -                        Reads STDIN as source (even in between regular files)" _ENDL;
+	_COUT "  -W[no-][all|<id>]        Enable/disable warning(s), see \"--help=warnings\"" _ENDL;
+	_COUT "  -                        Reads STDIN as source (even in between other files)" _ENDL;
 	_COUT "  --longptr                No device: program counter $ can go beyond 0x10000" _ENDL;
 	_COUT "  --reversepop             Enable reverse POP order (as in base SjASM version)" _ENDL;
 	_COUT "  --dirbol                 Enable directives from the beginning of line" _ENDL;
 	_COUT "  --dos866                 Encode from Windows codepage to DOS 866 (Cyrillic)" _ENDL;
-	_COUT "  --syntax=<...>           Adjust parsing syntax, check docs for details." _ENDL;
+	_COUT "  --syntax=<...>           Adjust parsing syntax, see \"--help=syntax\"" _ENDL;
+}
+
+static void PrintHelpSyntax() {
+	// Please keep help lines at most 79 characters long (cursor at column 88 after last char)
+	//     |<-- ...8901234567890123456789012345678901234567890123456789012... 80 chars -->|
+	_COUT "\nThe following options can be used with --syntax option:" _ENDL;
+	_COUT "  a     Multi-argument delimiter \",,\" (default is \",\")" _ENDL;
+	_COUT "        Even when selected, dec|inc|pop|push instructions still accept also \",\"" _ENDL;
+	_COUT "  b     Whole expression parentheses are legal for memory access only" _ENDL;
+	_COUT "  B     Memory access brackets [] required (by default both () and [] works)" _ENDL;
+	_COUT "  f F   Fake instructions: warning / disabled (default = enabled)" _ENDL;
+	_COUT "  i     Case insensitive instructions/directives (default = same case required)" _ENDL;
+	_COUT "  M     Alias \"m\" and \"M\" for \"(hl)\" to cover 8080-like syntax: ADD A,M" _ENDL;
+	_COUT "  s     Use only \"simple\" whole-word substitutions, no sub-words" _ENDL;
+	_COUT "  w     Report warnings as errors" _ENDL _ENDL;
+	_COUT "The recommended setup for new projects is " _CMDL Options::tcols->bold _CMDL Options::tcols->warning;
+	_COUT "--syntax=abfw" _CMDL Options::tcols->end _CMDL " which makes syntax less" _ENDL;
+	_COUT "relaxed => easier to catch some typos and mistakes." _ENDL;
+	_COUT "You can use directive OPT to inline syntax settings into source (recommended):" _ENDL;
+	_COUT "```" _CMDL Options::tcols->bold _CMDL Options::tcols->display _ENDL;
+	_COUT "        OPT reset --syntax=abfw" _ENDL;
+	_COUT "        ld b,($c000) ; <- error: Illegal instruction (can't access memory)" _ENDL;
+	_COUT Options::tcols->end _CMDL "```" _ENDL;
 }
 
 namespace Options {
@@ -102,6 +128,7 @@ namespace Options {
 	std::filesystem::path ListingFName {""};
 	std::filesystem::path ExportFName {""};
 	std::filesystem::path DestinationFName {""};
+	std::filesystem::path HEXFName {""};
 	std::filesystem::path RAWFName {""};
 	std::filesystem::path UnrealLabelListFName {""};
 	std::filesystem::path CSpectMapFName {""};
@@ -117,6 +144,7 @@ namespace Options {
 	bool HideLogo = false;
 	bool ShowHelp = false;
 	bool ShowHelpWarnings = false;
+	bool ShowHelpSyntax = false;
 	bool ShowVersion = false;
 	bool NoDestinationFile = true;		// no *.out file by default
 	SSyntax syx, systemSyntax;
@@ -125,6 +153,7 @@ namespace Options {
 	bool IsLongPtr = false;
 	bool SortSymbols = false;
 	bool IsBigEndian = false;
+	bool DeleteOnError = false;
 	bool EmitVirtualLabels = false;
 
 	// Include directories list is initialized with "." (aka LaunchDirectory aka CWD) directory
@@ -184,6 +213,7 @@ namespace Options {
 static void PrintHelp(bool forceMainHelp) {
 	if (forceMainHelp || Options::ShowHelp) PrintHelpMain();
 	if (Options::ShowHelpWarnings) PrintHelpWarnings();
+	if (Options::ShowHelpSyntax) PrintHelpSyntax();
 }
 
 CDevice *Devices = nullptr;
@@ -280,6 +310,7 @@ static void InitPass() {
 	smartSmcIndex = 0;
 	PseudoORG = DISP_NONE; adrdisp = 0; dispPageNum = LABEL_PAGE_UNDEFINED;
 	ListAddress = 0; macronummer = 0; lijst = 0; comlin = 0;
+	sldSwapSrcPos = 0;
 	lijstp = NULL;
 	DidEmitByte();				// reset the emitted flag
 	StructureTable.ReInit();
@@ -356,10 +387,10 @@ static void FreeRAM() {
 
 
 void ExitASM(int p) {
+	if (LASTPASS == pass) Close();
+	cout << flush;
 	FreeRAM();
-	if (pass == LASTPASS) {
-		Close();
-	}
+	DeleteOnError(p);
 	exit(p);
 }
 
@@ -473,6 +504,9 @@ namespace Options {
 					parseSyntaxValue();
 				} else if (!doubleDash && 'W' == opt[0]) {
 					CliWoption(val);
+				} else if (!strcmp(opt, "cleanonerror")) {
+					// this one is not part of syx and can't be reset, but making it available with OPT as well (works even late-enabled)
+					DeleteOnError = true;
 				} else if (onlySyntaxOptions) {
 					// rest of the options is available only when launching the sjasmplus
 					return;
@@ -487,8 +521,9 @@ namespace Options {
 					IsLR35902 = false;
 					syx.IsNextEnabled = 0;
 				} else if ((!doubleDash && 'h' == opt[0] && !val[0]) || (doubleDash && !strcmp(opt, "help"))) {
-					ShowHelp |= !!strcmp("warnings", val);
+					ShowHelp |= !!strcmp("warnings", val) && !!strcmp("syntax", val);
 					ShowHelpWarnings |= !strcmp("warnings", val);
+					ShowHelpSyntax |= !strcmp("syntax", val);
 				} else if (doubleDash && !strcmp(opt, "version")) {
 					ShowVersion = true;
 				} else if (!strcmp(opt, "lstlab")) {
@@ -528,6 +563,7 @@ namespace Options {
 					CheckAssignmentOption("lst", ListingFName) ||
 					CheckAssignmentOption("exp", ExportFName) ||
 					CheckAssignmentOption("sld", SourceLevelDebugFName) ||
+					CheckAssignmentOption("hex", HEXFName) ||
 					CheckAssignmentOption("raw", RAWFName) ) {
 					// was proccessed inside CheckAssignmentOption function
 				} else if (!strcmp(opt, "fullpath")) {
@@ -720,7 +756,7 @@ int main(int argc, char **argv) {
 	}
 	Options::systemSyntax = Options::syx;		// create copy of initial system settings of syntax
 
-	if (argc == 1 || Options::ShowHelp || Options::ShowHelpWarnings) {
+	if (argc == 1 || Options::ShowHelp || Options::ShowHelpWarnings || Options::ShowHelpSyntax) {
 		_COUT logo _ENDL;
 		PrintHelp(argc == 1);
 		exit(argc == 1);
@@ -768,7 +804,10 @@ int main(int argc, char **argv) {
 		++pass;
 		if (pass == LASTPASS) OpenSld();	//open source level debugging file (BEFORE InitPass)
 		InitPass();
-		if (pass == LASTPASS) OpenDest();
+		if (pass == LASTPASS) {
+			OpenDest();
+			OpenHex(Options::HEXFName);
+		}
 
 		static bool warn_stdin_default_lst = true;
 		for (SSource & src : sourceFiles) {
@@ -827,6 +866,7 @@ int main(int argc, char **argv) {
 	cout << flush;
 	FreeRAM();
 	lua_impl_close();
+	DeleteOnError(ErrorCount != 0);
 
 	if (Options::OutputVerbosity <= OV_ALL) {
 		double dwCount;

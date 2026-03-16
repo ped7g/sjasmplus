@@ -48,6 +48,7 @@ int TAP_SaveEmpty(const std::filesystem::path & fname) {
 		Error("opening file for write", fname.string().c_str()); return 0;
 	}
 	fclose(ff);
+	AddDeleteOnError(fname);
 	return 1;
 }
 
@@ -56,6 +57,7 @@ int TAP_SaveBlock(const std::filesystem::path & fname, unsigned char flag, const
 	if (!FOPEN_ISOK(fpout, fname, "ab")) {
 		Error("opening file for append", fname.string().c_str(), FATAL);
 	}
+	// not adding to --cleanonerror, because this is appending to some file, not creating it
 
 	if (length + start > 0x10000) {
 	    length = -1;
@@ -138,20 +140,21 @@ int TAP_SaveSnapshot(const std::filesystem::path & fname, unsigned short start) 
 	if (!FOPEN_ISOK(fpout, fname, "wb")) {
 		Error("opening file for write", fname.string().c_str(), FATAL);
 	}
+	AddDeleteOnError(fname);
 
 	aint datastart = 0x5E00;
 	aint exeat = 0x5E00;
-	aint basiclen = 0x1e + 2;
+	aint blocklen = 0x1e + 2;
 
 	/* Filetype (0: Basic), with autostart "LINE 10" */
-	writeheader(0, "LOADER", basiclen, 10, basiclen, fpout);
+	writeheader(0, "LOADER", blocklen, 10, blocklen, fpout);
 
-	writeword(basiclen + 2, fpout);	// length of block
+	writeword(blocklen + 2, fpout);	// length of block
 	parity = 0;
 	writebyte(0xff, fpout);
 	writebyte(0, fpout);
-	writebyte(10, fpout);		// LINE 10
-	writebyte(basiclen, fpout);	// basic line length
+	writebyte(10, fpout);			// LINE 10
+	writebyte(blocklen - 4, fpout);	// basic line length
 	writebyte(0, fpout);
 
 	// :CLEAR VAL "xxxxx"
@@ -224,17 +227,16 @@ int TAP_SaveSnapshot(const std::filesystem::path & fname, unsigned short start) 
 		ram_length -= ram_start;
 
 		// write loader
-		unsigned char *loader = new unsigned char[SaveTAP_ZX_Spectrum_48K_SZ];
-		memcpy(loader, (char*)&SaveTAP_ZX_Spectrum_48K[0], SaveTAP_ZX_Spectrum_48K_SZ);
-		if (loader == NULL) ErrorOOM();
+		uint8_t loader[SaveTAP_ZX_Spectrum_48K_SZ];
+		memcpy(loader, &SaveTAP_ZX_Spectrum_48K[0], SaveTAP_ZX_Spectrum_48K_SZ);
 		// Settings.LoadScreen
-		loader[SaveTAP_ZX_Spectrum_48K_SZ - 7] = char(has_screen_changes());
-		loader[SaveTAP_ZX_Spectrum_48K_SZ - 6] = char(start & 0x00FF);
-		loader[SaveTAP_ZX_Spectrum_48K_SZ - 5] = char(start >> 8);
-		loader[SaveTAP_ZX_Spectrum_48K_SZ - 4] = char((ram_start + 0x5E00) & 0x00FF);
-		loader[SaveTAP_ZX_Spectrum_48K_SZ - 3] = char((ram_start + 0x5E00) >> 8);
-		loader[SaveTAP_ZX_Spectrum_48K_SZ - 2] = char(ram_length & 0x00FF);
-		loader[SaveTAP_ZX_Spectrum_48K_SZ - 1] = char(ram_length >> 8);
+		loader[SaveTAP_ZX_Spectrum_48K_SZ - 7] = uint8_t(has_screen_changes());
+		loader[SaveTAP_ZX_Spectrum_48K_SZ - 6] = uint8_t(start);
+		loader[SaveTAP_ZX_Spectrum_48K_SZ - 5] = uint8_t(start >> 8);
+		loader[SaveTAP_ZX_Spectrum_48K_SZ - 4] = uint8_t(ram_start + 0x5E00);
+		loader[SaveTAP_ZX_Spectrum_48K_SZ - 3] = uint8_t((ram_start + 0x5E00) >> 8);
+		loader[SaveTAP_ZX_Spectrum_48K_SZ - 2] = uint8_t(ram_length);
+		loader[SaveTAP_ZX_Spectrum_48K_SZ - 1] = uint8_t(ram_length >> 8);
 		writecode(loader, SaveTAP_ZX_Spectrum_48K_SZ, 0x5E00, true, fpout);
 
 		// write screen$

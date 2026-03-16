@@ -441,14 +441,18 @@ void ParseAlignArguments(char* & src, aint & alignment, aint & fill) {
 	}
 }
 
+static constexpr const char GLUE_TAG = 26;		// "substitute" in utf8, kinda fits the purpose?
+static constexpr const char GLUE_CHAR = '_';
+
 static bool ReplaceDefineInternal(char* lp, char* const nl) {
 	int definegereplaced = 0,dr;
 	char* rp = nl,* nid;
 	const char* ver;
 	bool isDefDir = false;	// to remember if one of DEFINE-related directives was used
-	bool afterNonAlphaNum, afterNonAlphaNumNext = true;
+	bool afterNonAlphaNum, afterNonAlphaNumNext = true, glueDetected = false;
 	char defarrayCountTxt[16] = { 0 };
 	while (*lp && ((rp - nl) < LINEMAX)) {
+		glueDetected |= (GLUE_TAG == *lp);		// there is already some glue in source line
 		const char c1 = lp[0], c2 = lp[1];
 		afterNonAlphaNum = afterNonAlphaNumNext;
 		afterNonAlphaNumNext = !isalnum((byte)c1);
@@ -556,7 +560,7 @@ static bool ReplaceDefineInternal(char* lp, char* const nl) {
 							} else {
 								ver = a->string;	// substitute with array value
 							}
-						} else {	// no substition of array possible at this time (index eval / syntax error)
+						} else {	// no substitution of array possible at this time (index eval / syntax error)
 							lp = expLp;				// restore lp in case expression parser went ahead a lot
 							dr = -1;// write into output, but don't count as replacement
 						}
@@ -566,14 +570,29 @@ static bool ReplaceDefineInternal(char* lp, char* const nl) {
 				dr = 0;			// no possible substitution found
 				ver = nid;
 			}
-			// check if no substition was found, and there's no more chars to extend SubId
+			// check if no substitution was found, and there's no more chars to extend SubId
 			if (0 == dr && !islabchar(*lp)) {
 				lp = nextSubIdLp;		// was fully extended, no match, "eat" first subId
 				ResetGrowSubId();
 				ver = GrowSubId(lp);	// find the first SubId again, for the copy
 				dr = -1;				// write into output, but don't count as replacement
 			}
-			if (0 < dr) definegereplaced = 1;		// above zero => count as replacement
+			if (0 < dr) {
+				definegereplaced = 1;	// above zero => count as replacement
+				// look ahead in "to" array to convert any whitespace enclosed `_` to glue tag
+				char* gluep = rp;		// first skip whitespace ahead of substitution
+				while ((nl < gluep--) && (GLUE_TAG != gluep[0]) && (White(gluep[0]))) /* empty */;
+				// now check if there was whitespace, is glue char '_' and further whitespace ahead of it
+				if ((nl < gluep) && (gluep + 1 < rp) && (GLUE_CHAR == gluep[0]) && White(gluep[-1])) {
+					gluep[0] = GLUE_TAG;// convert it to glue tag for later
+					// not important to set glueDetected because substitution happened
+				}
+				// look after in "from" array to convert any whitespace enclosed `_` to glue tag
+				for (gluep = lp; GLUE_TAG != gluep[0] && White(gluep[0]); ) ++gluep;
+				if ((lp < gluep) && (GLUE_CHAR == gluep[0]) && White(gluep[1])) {
+					gluep[0] = GLUE_TAG;// convert it to glue tag for later
+				}
+			}
 			if (0 != dr) {				// any non-zero dr => write to the output
 				while (*ver && ((rp - nl) < LINEMAX)) *rp++ = *ver++;		// replace the string into target buffer
 				// reset subId parser to catch second+ subId in current Id
@@ -588,6 +607,28 @@ static bool ReplaceDefineInternal(char* lp, char* const nl) {
 	if (LINEMAX <= (rp - nl)) {
 		Error("line too long after macro expansion", nl, SUPPRESS);
 	}
+	// if no substitution happened, but there are glue bytes, glue it all together now
+	if (0 == definegereplaced && glueDetected) {
+		// now glue the pieces together around each glue
+		int dropChars = 0;
+		for (rp = nl; *rp; ++rp) {
+			if (GLUE_TAG == *rp) {
+				char* leftp = rp, * rightp = rp;
+				leftp = rp;
+				while (nl < leftp && White(leftp[-1])) --leftp;	// eat all whitespace to left
+				while (White(rightp[0])) ++rightp;				// eat all whitespace to right
+				// leftp points at left-most whitespace char, rightp points at first non-whitespace or \0
+				if ((nl == leftp) || (0 == rightp[0])) rp[0] = GLUE_CHAR;	// nothing to glue with, restore
+				else {
+					dropChars -= (rightp - leftp);				// discard this whitespace + glue block
+					rp = rightp;
+				}
+			}
+			if (dropChars < 0) rp[dropChars] = rp[0];	// move other chars over removed areas
+		}
+		rp[dropChars] = 0;		// make sure there's zero terminator also for glued result
+		return true;			// report modification
+	}
 	// check if whole line is just blanks, then return just empty one
 	rp = nl;
 	if (SkipBlanks(rp)) *nl = 0;
@@ -595,17 +636,16 @@ static bool ReplaceDefineInternal(char* lp, char* const nl) {
 	return definegereplaced;
 }
 
-char* ReplaceDefine(char* lp) {
-	// do first replacement into sline buffer (and if no define replace done, just return it)
-	if (!ReplaceDefineInternal(lp, sline)) return sline;
-	// Some define were replaced, line is in "sline", now ping-pong it between sline and sline2
-	int defineReplaceRecursion = 0;
-	while (defineReplaceRecursion++ < 10) {
-		if (!ReplaceDefineInternal(sline, sline2)) return sline2;
-		if (!ReplaceDefineInternal(sline2, sline)) return sline;
+char* ReplaceDefine(char* src) {
+	char* to = sline;
+	for (int maxIter = 31; maxIter--;) {
+		if (!ReplaceDefineInternal(src, to)) return to;	// no more replacements
+		// Some define were replaced, now ping-pong sline <-> sline2 buffers
+		src = to;
+		to = (sline == to) ? sline2 : sline;
 	}
-	Error("Unable to finish substitions, line after 20th iteration", sline, SUPPRESS);
-	return sline;
+	Error("Unable to finish substitutions, line after last iteration", src, SUPPRESS);
+	return src;
 }
 
 void SetLastParsedLabel(const char* label) {
@@ -684,7 +724,7 @@ void ParseLabel() {
 		}
 		val = atoi(tp);
 		if (!TemporaryLabelTable.InsertRefresh(val)) {
-			Error("Temporary labels flow differs in this pass (missing/new temporary label or final pass source difference)");
+			Error("Temporary labels flow differs in last pass (missing/new temporary label since previous pass)");
 		}
 	} else {
 		if (isMacroNext()) {
@@ -1091,8 +1131,7 @@ void ParseStructMember(CStructure* st) {
 			gl = 1;
 		}
 		if ((n = GetID(pp)) && (s = StructureTable.zoek(n, gl))) {
-			char* structName = st->naam;	// need copy of pointer so cmphstr can advance it in case of match
-			if (cmphstr(structName, n)) {
+			if (st == s) {
 				Error("[STRUCT] Can't include itself", NULL);
 				SkipToEol(pp);
 				lp = pp;

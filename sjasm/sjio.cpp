@@ -29,15 +29,18 @@
 // sjio.cpp
 
 #include "sjdefs.h"
+#include <set>
 
 #include <fcntl.h>
 
-static const std::filesystem::path EMPTY_PATH{""};
-static const std::filesystem::path DOUBLE_DOT_PARENT{".."};
+namespace fs = std::filesystem;
+
+static const fs::path EMPTY_PATH{""};
+static const fs::path DOUBLE_DOT_PARENT{".."};
 static constexpr char pathBadSlash = '\\';
 static constexpr char pathGoodSlash = '/';
 
-std::filesystem::path LaunchDirectory {};
+fs::path LaunchDirectory {};
 
 int ListAddress;
 
@@ -56,14 +59,22 @@ static int tape_seek = 0;
 static int tape_length = 0;
 static int tape_parity = 0x55;
 static FILE* FP_tapout = NULL;
-static FILE* FP_Input = NULL, * FP_Output = NULL, * FP_RAW = NULL;
+static FILE* FP_Input = nullptr, * FP_Output = nullptr, * FP_HEX = nullptr, * FP_RAW = nullptr;
 static FILE* FP_ListingFile = NULL,* FP_ExportFile = NULL;
 static aint WBLength = 0;
+
+// map to archive all input files (to have stable valid c_str pointers of their filenames until exit)
+// key: filename + delimiter info
+// value: archived fullpath/basename ready to open or print
+using files_in_map_t = std::map<const delim_string_t, const SInputFile>;	// input files per name
+using dirs_in_map_t = std::map<const fs::path, files_in_map_t>;				// input files per current directory
+using files_set_t = std::set<fs::path>;										// files store for --cleanonerror
+					// std::unordered_set needs fs::path hash, which is part of standard in C++23
 
 static void CloseBreakpointsFile();
 
 std::string SInputFile::InitStr() {
-	auto canonical = std::filesystem::exists(full) ? std::filesystem::canonical(full) : full.lexically_normal();
+	auto canonical = fs::exists(full) ? fs::canonical(full) : full.lexically_normal();
 	switch(Options::FileVerbosity) {
 		case Options::FNAME_LAUNCH_REL:
 			{	// try relative to LaunchDirectory, if outside (starts with "../") then keep absolute
@@ -79,7 +90,39 @@ std::string SInputFile::InitStr() {
 	}
 }
 
-std::filesystem::path GetOutputFileName(char*& p) {
+
+static files_set_t DeleteOnErrorFiles;
+
+// candidate file for delete-on-error
+void AddDeleteOnError(const fs::path & output_file) {
+	std::error_code err;
+	auto absolute = fs::absolute(output_file, err);
+	if (err) return;
+	auto canonical = fs::weakly_canonical(absolute, err);
+	if (err) return;
+	DeleteOnErrorFiles.insert(canonical);
+}
+
+// execute the deletion when 0 != exitCode
+void DeleteOnError(int exitCode) {
+	// check proposed exit code, if --cleanonerror is enabled and if there are any filenames
+	if (0 == exitCode || !Options::DeleteOnError || DeleteOnErrorFiles.empty()) return;
+	if (Options::OutputVerbosity <= OV_ALL) {
+		_CERR "Deleting files on error (--cleanonerror):" _ENDL;
+	}
+	// check all recorded filenames and delete the existing ones (listing them with "all" output)
+	std::error_code err;
+	for (const auto & file : DeleteOnErrorFiles) {
+		if (!FileExists(file)) continue;
+		if (Options::OutputVerbosity <= OV_ALL) {
+			_CERR " - " _CMDL file.string().c_str() _ENDL;
+		}
+		fs::remove(file, err);
+	}
+	DeleteOnErrorFiles.clear();
+}
+
+fs::path GetOutputFileName(char*& p) {
 	auto str_name = GetDelimitedStringEx(p);	// read delimited filename string
 	SJ_FixSlashes(str_name);					// convert backslashes *with* warning
 	// prefix with output path and force slashes again (without warning)
@@ -116,10 +159,10 @@ fullpath_ref_t GetInputFile(delim_string_t && in) {
 	if (in.first.empty() && DT_COUNT == in.second) return INPUT_FILE_STDIN;
 
 	// get current file's directory as base (use LaunchDirectory as fallback for stdin or zero level)
-	std::filesystem::path CurrentDirectory = (fileNameFull && !fileNameFull->full.empty()) ? fileNameFull->full : LaunchDirectory;
-	if (!std::filesystem::is_directory(CurrentDirectory)) CurrentDirectory.remove_filename();
+	fs::path CurrentDirectory = (fileNameFull && !fileNameFull->full.empty()) ? fileNameFull->full : LaunchDirectory;
+	if (!fs::is_directory(CurrentDirectory)) CurrentDirectory.remove_filename();
 	// make current directory canonical+relative to launchdir (avoid "..//"-like dupes in allArchivedInputFiles)
-	CurrentDirectory = std::filesystem::canonical(CurrentDirectory).lexically_proximate(LaunchDirectory);
+	CurrentDirectory = fs::canonical(CurrentDirectory).lexically_proximate(LaunchDirectory);
 
 	// archive of all input files opened so far in the current directory (search results differ per current dir)
 	files_in_map_t & archivedInputFiles = allArchivedInputFiles[CurrentDirectory];
@@ -132,7 +175,7 @@ fullpath_ref_t GetInputFile(delim_string_t && in) {
 	// !!! any warnings after this point must be W_EARLY, 2nd+ pass should use archived path = no warning !!!
 
 	// not archived yet, look for the file somewhere...
-	const std::filesystem::path name_in{ in.first };
+	const fs::path name_in{ in.first };
 	// no filename - return it as is (it's not valid for open)
 	if (!name_in.has_filename()) {
 		return archivedInputFiles.emplace_hint(lb, std::move(in), std::move(name_in))->second;
@@ -166,7 +209,7 @@ fullpath_ref_t GetInputFile(char*& p) {
 	return GetInputFile(std::move(name_in));
 }
 
-void ConstructDefaultFilename(std::filesystem::path & dest, const char* ext, bool checkIfDestIsEmpty) {
+void ConstructDefaultFilename(fs::path & dest, const char* ext, bool checkIfDestIsEmpty) {
 	if (nullptr == ext || !ext[0]) exit(1);	// invalid arguments
 	// if the destination buffer has already some content and check is requested, exit
 	if (checkIfDestIsEmpty && !dest.empty()) return;
@@ -379,11 +422,18 @@ bool DidEmitByte() {	// returns true if some byte was emitted since last call to
 	return didEmit;
 }
 
+bool DidWriteOutputByte() {		// returns true while output/raw/tapout is active and some byte was emitted to it
+	aint expectedDestLen = WBLength + destlen;
+	return ((FP_Output || FP_RAW || FP_tapout) && expectedDestLen);
+}
+
 static void EmitByteNoListing(int byte, bool preserveDeviceMemory = false) {
 	someByteEmitted = true;
 	if (LASTPASS == pass) {
 		WriteBuffer[WBLength++] = (char)byte;
 		if (DESTBUFLEN == WBLength) WriteDest();
+		// Intel HEX has own buffering scheme and needs fresh CurAddress, so it's outside of WriteDest()
+		if (nullptr != FP_HEX) EmitToHex(static_cast<uint8_t>(byte));
 	}
 	// the page-checking in device mode must be done in all passes, the slot can have "wrap" option
 	if (DeviceID) {
@@ -600,6 +650,7 @@ void OpenFile(fullpath_ref_t nfilename, stdin_log_t* fStdinLog)
 	rlpbuf = rlpbuf_end = rlbuf;
 	colonSubline = false;
 	blockComment = 0;
+	const aint osldSwapSrcPos = sldSwapSrcPos;
 
 	ReadBufLine();
 
@@ -611,6 +662,7 @@ void OpenFile(fullpath_ref_t nfilename, stdin_log_t* fStdinLog)
 		}
 	}
 
+	if (osldSwapSrcPos != sldSwapSrcPos && IncludeLevel) WarningById(W_SLD_SWAP, nfilename.str.c_str());
 	// show in listing file which file was closed
 	if (LASTPASS == pass && listFile) {
 		fputs("# file closed: ", listFile);
@@ -730,6 +782,7 @@ void ReadBufLine(bool Parse, bool SplitByColon) {
 	// try to read through the buffer and produce new line from it
 	while (IsRunning && ReadBufData()) {
 		// start of new line (or fake "line" by colon)
+		aint indentedColumns = 0;
 		rlppos = line;
 		substitutedLine = line;		// also reset "substituted" line to the raw new one
 		eolComment = NULL;
@@ -739,6 +792,17 @@ void ReadBufLine(bool Parse, bool SplitByColon) {
 			IsLabel = false;
 		} else {					// starting real new line
 			IsLabel = (0 == blockComment);
+			if (IsLabel && SplitByColon) {	// line can have label and may be processed by ReadBufLine (like split by colons)
+				// skip indented '>' as if it was not part of source (only space and tab can be used)
+				while (ReadBufData() && ((' ' == *rlpbuf) || ('\t' == *rlpbuf))) *rlppos++ = *rlpbuf++;
+				if (ReadBufData() && ('>' == *rlpbuf)) {	// label indentation feature, discard all till here
+					indentedColumns = 1 + rlppos - line;	// track how many columns were discarded
+					++rlpbuf;			// advance after the indentation greater-than >
+					rlppos = line;		// discard copied whitespace
+				} else {				// whitespace as part of line, preserve copied whitespace
+					IsLabel &= (line == rlppos);	// label not possible if whitespace was copied
+				}
+			}
 		}
 		bool afterNonAlphaNum, afterNonAlphaNumNext = true;
 		// copy data from read buffer into `line` buffer until EOL/colon is found
@@ -826,7 +890,7 @@ void ReadBufLine(bool Parse, bool SplitByColon) {
 		}
 		// do +1 for very first colon-segment only (rest is +1 due to artificial space at beginning)
 		assert(!sourcePosStack.empty());
-		size_t advanceColumns = colonSubline ? (0 == sourcePosStack.back().colEnd) + strlen(line) : 0;
+		size_t advanceColumns = colonSubline ? (0 == sourcePosStack.back().colEnd) + (rlppos -line) + indentedColumns : 0;
 		sourcePosStack.back().nextSegment(colonSubline, advanceColumns);
 		// line is parsed and ready to be processed
 		if (Parse) 	ParseLine();	// processed here in loop
@@ -834,7 +898,7 @@ void ReadBufLine(bool Parse, bool SplitByColon) {
 	} // while (IsRunning && ReadBufData())
 }
 
-static void OpenListImp(const std::filesystem::path & listFilename) {
+static void OpenListImp(const fs::path & listFilename) {
 	// if STDERR is configured to contain listing, disable other listing files
 	if (OV_LST == Options::OutputVerbosity) return;
 	if (listFilename.empty()) return;
@@ -860,7 +924,7 @@ static void OpenDefaultList(fullpath_ref_t inputFile) {
 	if (!Options::IsDefaultListingName || NULL != FP_ListingFile) return;
 	if (inputFile.full.empty()) return;		// no filename provided
 	// Create default listing name, and try to open it
-	std::filesystem::path listName { inputFile.full };
+	fs::path listName { inputFile.full };
 	listName.replace_extension("lst");
 	OpenListImp(listName);
 }
@@ -884,6 +948,7 @@ void CloseDest() {
 	}
 	fclose(FP_Output);
 	FP_Output = NULL;
+	destlen = 0;
 }
 
 void SeekDest(long offset, int method) {
@@ -893,7 +958,7 @@ void SeekDest(long offset, int method) {
 	}
 }
 
-void NewDest(const std::filesystem::path & newfilename, int mode) {
+void NewDest(const fs::path & newfilename, int mode) {
 	// close previous output file
 	CloseDest();
 
@@ -907,8 +972,12 @@ void OpenDest(int mode) {
 	if (mode != OUTPUT_TRUNCATE && !FileExists(Options::DestinationFName)) {
 		mode = OUTPUT_TRUNCATE;
 	}
-	if (!Options::NoDestinationFile && !FOPEN_ISOK(FP_Output, Options::DestinationFName, mode == OUTPUT_TRUNCATE ? "wb" : "r+b")) {
-		Error("opening file for write", Options::DestinationFName.string().c_str(), FATAL);
+	if (!Options::NoDestinationFile) {
+		if (!FOPEN_ISOK(FP_Output, Options::DestinationFName, mode == OUTPUT_TRUNCATE ? "wb" : "r+b")) {
+			Error("opening file for write", Options::DestinationFName.string().c_str(), FATAL);
+		} else if (OUTPUT_TRUNCATE == mode) {
+			AddDeleteOnError(Options::DestinationFName);	// cleanonerror only in truncate (create) mode
+		}
 	}
 	Options::NoDestinationFile = false;
 	if (NULL == FP_RAW && "-" == Options::RAWFName) {
@@ -916,8 +985,9 @@ void OpenDest(int mode) {
 		fflush(stdout);
 		switchStdOutIntoBinaryMode();
 	}
-	if (FP_RAW == NULL && Options::RAWFName.has_filename() && !FOPEN_ISOK(FP_RAW, Options::RAWFName, "wb")) {
-		Error("opening file for write", Options::RAWFName.string().c_str());
+	if (FP_RAW == NULL && Options::RAWFName.has_filename()) {
+		if (FOPEN_ISOK(FP_RAW, Options::RAWFName, "wb")) AddDeleteOnError(Options::RAWFName);
+		else Error("opening file for write", Options::RAWFName.string().c_str());
 	}
 	if (FP_Output != NULL && mode != OUTPUT_TRUNCATE) {
 		if (fseek(FP_Output, 0, mode == OUTPUT_REWIND ? SEEK_SET : SEEK_END)) {
@@ -944,9 +1014,10 @@ void CloseTapFile()
 
 	fclose(FP_tapout);
 	FP_tapout = NULL;
+	destlen = 0;
 }
 
-void OpenTapFile(const std::filesystem::path & tapename, int flagbyte)
+void OpenTapFile(const fs::path & tapename, int flagbyte)
 {
 	CloseTapFile();
 
@@ -954,6 +1025,7 @@ void OpenTapFile(const std::filesystem::path & tapename, int flagbyte)
 		Error( "opening file for write", tapename.string().c_str());
 		return;
 	}
+	// not adding to --cleanonerror, because this is appending to some file, not creating it
 	if (fseek(FP_tapout, 0, SEEK_END)) Error("File seek end error in TAPOUT", tapename.string().c_str(), FATAL);
 
 	tape_seek = ftell(FP_tapout);
@@ -966,24 +1038,26 @@ void OpenTapFile(const std::filesystem::path & tapename, int flagbyte)
 		fclose(FP_tapout);
 		Error("Write error (disk full?)", NULL, FATAL);
 	}
+	destlen = 0;
 }
 
 // check if file exists and can be read for content
-bool FileExists(const std::filesystem::path & file_name) {
-	return	std::filesystem::exists(file_name) && (
-		std::filesystem::is_regular_file(file_name) ||
-		std::filesystem::is_character_file(file_name)	// true for very rare files like /dev/null
+bool FileExists(const fs::path & file_name) {
+	return	fs::exists(file_name) && (
+		fs::is_regular_file(file_name) ||
+		fs::is_character_file(file_name)	// true for very rare files like /dev/null
 	);
 }
 
 bool FileExistsCstr(const char* file_name) {
 	if (nullptr == file_name) return false;
-	return FileExists(std::filesystem::path(file_name));
+	return FileExists(fs::path(file_name));
 }
 
 void Close() {
 	if (*ModuleName) {
 		Warning("ENDMODULE missing for module", ModuleName, W_ALL);
+		*ModuleName = 0;
 	}
 
 	CloseDest();
@@ -992,6 +1066,7 @@ void Close() {
 		fclose(FP_ExportFile);
 		FP_ExportFile = NULL;
 	}
+	CloseHex();
 	if (FP_RAW != NULL) {
 		if (stdout != FP_RAW) fclose(FP_RAW);
 		FP_RAW = NULL;
@@ -1059,18 +1134,20 @@ unsigned char MemGetByte(unsigned int address) {
 }
 
 
-int SaveBinary(const std::filesystem::path & fname, aint start, aint length) {
+int SaveBinary(const fs::path & fname, aint start, aint length) {
 	FILE* ff;
 	if (!FOPEN_ISOK(ff, fname, "wb")) Error("opening file for write", fname.string().c_str(), FATAL);
+	AddDeleteOnError(fname);
 	int result = SaveRAM(ff, start, length);
 	fclose(ff);
 	return result;
 }
 
 
-int SaveBinary3dos(const std::filesystem::path & fname, aint start, aint length, byte type, word w2, word w3) {
+int SaveBinary3dos(const fs::path & fname, aint start, aint length, byte type, word w2, word w3) {
 	FILE* ff;
 	if (!FOPEN_ISOK(ff, fname, "wb")) Error("opening file for write", fname.string().c_str(), FATAL);
+	AddDeleteOnError(fname);
 	// prepare +3DOS 128 byte header content
 	constexpr aint hsize = 128;
 	const aint full_length = hsize + length;
@@ -1097,12 +1174,13 @@ int SaveBinary3dos(const std::filesystem::path & fname, aint start, aint length,
 }
 
 
-int SaveBinaryAmsdos(const std::filesystem::path & fname, aint start, aint length, word start_adr, byte type) {
+int SaveBinaryAmsdos(const fs::path & fname, aint start, aint length, word start_adr, byte type) {
 	FILE* ff;
 	if (!FOPEN_ISOK(ff, fname, "wb")) {
 		Error("opening file for write", fname.string().c_str(), SUPPRESS);
 		return 0;
 	}
+	AddDeleteOnError(fname);
 	// prepare AMSDOS 128 byte header content
 	constexpr aint hsize = 128;
 	byte amsdos_header[hsize] {};	// all zeroed (user_number and filename stay like that, just zeroes)
@@ -1132,16 +1210,17 @@ bool SaveDeviceMemory(FILE* file, const size_t start, const size_t length) {
 
 
 // start and length must be sanitized by caller
-bool SaveDeviceMemory(const std::filesystem::path & fname, const size_t start, const size_t length) {
+bool SaveDeviceMemory(const fs::path & fname, const size_t start, const size_t length) {
 	FILE* ff;
 	if (!FOPEN_ISOK(ff, fname, "wb")) Error("opening file for write", fname.string().c_str(), FATAL);
+	AddDeleteOnError(fname);
 	bool res = SaveDeviceMemory(ff, start, length);
 	fclose(ff);
 	return res;
 }
 
 
-int SaveHobeta(const std::filesystem::path & fname, const char* fhobname, aint start, aint length) {
+int SaveHobeta(const fs::path & fname, const char* fhobname, aint start, aint length) {
 	unsigned char header[0x11];
 	int i;
 
@@ -1193,6 +1272,7 @@ int SaveHobeta(const std::filesystem::path & fname, const char* fhobname, aint s
 	if (!FOPEN_ISOK(ff, fname, "wb")) {
 		Error("opening file for write", fname.string().c_str(), FATAL);
 	}
+	AddDeleteOnError(fname);
 
 	int result = (17 == fwrite(header, 1, 17, ff)) && SaveRAM(ff, start, length);
 	fclose(ff);
@@ -1331,6 +1411,7 @@ void OpenExpFile() {
 	assert(nullptr == FP_ExportFile);			// this should be the first and only call to open it
 	if (!Options::ExportFName.has_filename()) return;	// no export file name provided, skip opening
 	if (FOPEN_ISOK(FP_ExportFile, Options::ExportFName, "w")) return;
+	// not adding to --cleanonerror, this is not binary output file
 	Error("opening file for write", Options::ExportFName.string().c_str(), ALL);
 }
 
@@ -1350,8 +1431,125 @@ void WriteExp(const char* n, aint v) {
 	WriteLabelEquValue(n, v, FP_ExportFile);
 }
 
+constexpr const aint HEX_RECORD_MAX = 16;
+static uint8_t hexBytes[HEX_RECORD_MAX];
+static aint hexCnt = 0;
+static aint hexAddress = 0;				// original address where buffered data starts
+
+static void WriteHexRecord(const uint8_t block_type, const uint16_t address = 0, const uint8_t length = 0, const uint8_t* data = nullptr) {
+	assert(0x00 == block_type || 0x01 == block_type || 0x03 == block_type);	// currently supported block types
+	assert((0 == length) || ((nullptr != data) && length <= HEX_RECORD_MAX));
+
+	static char hexTxt[] { ":llaaaabbddddddddddddddddddddddddddddddddcc\n" };
+						//  :10123400484558206F6E6C790A70657220313620FF\n\0
+	static_assert(1+(1+2+1+HEX_RECORD_MAX+1)*2+2 == sizeof(hexTxt));
+
+	char* toTxt = hexTxt + 1;
+	PrintHex(toTxt, length, 2);
+	PrintHex(toTxt, address, 4);
+	PrintHex(toTxt, block_type, 2);
+	uint8_t crc = -length - ((address >> 8) & 255) - (address & 255) - block_type;
+	for (uint8_t i = 0; i < length; ++i) {
+		PrintHex(toTxt, data[i], 2);
+		crc -= data[i];
+	}
+	PrintHex(toTxt, crc, 2);
+	*toTxt++ = '\n';
+	*toTxt++ = 0;
+	fputs(hexTxt, FP_HEX);
+}
+
+static void FlushHexBuffer() {
+	assert(nullptr != FP_HEX && 0 <= hexCnt && hexCnt <= HEX_RECORD_MAX);
+	if (0 == hexCnt) return;			// buffer is already empty
+	WriteHexRecord(0x00, hexAddress, hexCnt, hexBytes);
+	hexCnt = 0;
+}
+
+bool OpenHex(const fs::path & fname) {
+	if (!fname.has_filename()) return false;
+	if (nullptr != FP_HEX) {
+		Error("HEX output is already active, can't open for file", fname.string().c_str(), SUPPRESS);
+		return false;
+	}
+	if ("-" == fname) {
+		if (stdout == FP_RAW) {
+			Error("Directing both --raw and --hex to stdout will produce mixed/corrupted output", nullptr, ALL);
+			return false;
+		}
+		FP_HEX = stdout;
+		fflush(stdout);
+		switchStdOutIntoBinaryMode();
+	} else if (!FOPEN_ISOK(FP_HEX, fname, "wb")) {
+		// use fopen "w" mode to get CRLF EOLs on mingw windows build.
+		// To make CI testing simpler and force world into *NIX LF way there is "wb" right now
+		Error("opening HEX file for write", fname.string().c_str());
+		return false;
+	} else {
+		AddDeleteOnError(fname);
+	}
+	hexCnt = 0;
+	return true;
+}
+
+void EmitToHex(const uint8_t mc) {
+	assert(0 <= hexCnt && hexCnt < HEX_RECORD_MAX);
+	if (hexAddress + hexCnt != CurAddress) FlushHexBuffer();	// flush buffer if there is address jump
+	if (0 == hexCnt) hexAddress = CurAddress;					// set current address of buffer at beginning
+	hexBytes[hexCnt++] = mc;
+	if (HEX_RECORD_MAX == hexCnt) FlushHexBuffer();				// buffer is full, write hex record
+}
+
+bool CloseHex(const aint start) {
+	if (nullptr == FP_HEX) return false;
+	FlushHexBuffer();					// write remaining buffer (if any)
+	if (0 <= start) {					// write start address if it was provided
+		hexBytes[0] = static_cast<uint8_t>(start >> 24);
+		hexBytes[1] = static_cast<uint8_t>(start >> 16);
+		hexBytes[2] = static_cast<uint8_t>(start >>  8);
+		hexBytes[3] = static_cast<uint8_t>(start >>  0);
+		WriteHexRecord(0x03, 0x0000, 4, hexBytes);
+	}
+	WriteHexRecord(0x01);				// write EOF record
+	if (stdout != FP_HEX) fclose(FP_HEX);
+	FP_HEX = nullptr;
+	return true;
+}
+
+bool SaveHex(const fs::path & fname, aint start, aint length, aint start_adr) {
+	if (!DeviceID) return false;
+	if (!OpenHex(fname)) return false;
+	assert(0 <= start && start <= 0xFFFF && 1 <= length && start + length <= 0x1'0000);
+	//unsigned int addadr = 0,save = 0;
+	for (int i = 0; i < Device->SlotsCount; ++i) {
+		CDeviceSlot* slot = Device->GetSlot(i);
+		if (start < slot->Address) return false;	// shouldn't be possible
+		while (start < slot->Address + slot->Size) {
+			aint save = std::min(length, slot->Size - (start - slot->Address));
+			while (HEX_RECORD_MAX <= save) {
+				WriteHexRecord(0x00, start, HEX_RECORD_MAX, slot->Page->RAM + (start - slot->Address));
+				start += HEX_RECORD_MAX;
+				length -= HEX_RECORD_MAX;
+				save -= HEX_RECORD_MAX;
+			}
+			if (0 < save) {
+				WriteHexRecord(0x00, start, save, slot->Page->RAM + (start - slot->Address));
+				start += save;
+				length -= save;
+			}
+			if (length <= 0) {
+				assert(0 == hexCnt);				// this is only active HEX writer, the buffer should/must be empty
+				hexCnt = 0;							// but make sure the HEXOUT buffer is empty to reuse CloseHex()
+				return CloseHex(start_adr);
+			}
+		}
+	}
+	return false;									// shouldn't be possible
+}
+
 /////// source-level-debugging support by Ckirby
 
+aint sldSwapSrcPos = 0;
 static FILE* FP_SourceLevelDebugging = NULL;
 static char sldMessage[LINEMAX2];
 static const char* WriteToSld_noSymbol = "";
@@ -1365,11 +1563,12 @@ static void WriteToSldFile_TextFilePos(char* buffer, const TextFilePos & pos) {
 	snprintf(buffer, 1024-1, sldMessage_posFormat + offsetFormat, pos.line, pos.colBegin, pos.colEnd);
 }
 
-static void OpenSldImp(const std::filesystem::path & sldFilename) {
+static void OpenSldImp(const fs::path & sldFilename) {
 	if (!sldFilename.has_filename()) return;
 	if (!FOPEN_ISOK(FP_SourceLevelDebugging, sldFilename, "w")) {
 		Error("opening file for write", sldFilename.string().c_str(), FATAL);
 	}
+	// not adding to --cleanonerror, this is not binary output file
 	fputs("|SLD.data.version|1\n", FP_SourceLevelDebugging);
 	if (0 < sldCommentKeywords.size()) {
 		fputs("||K|KEYWORDS|", FP_SourceLevelDebugging);
@@ -1436,6 +1635,7 @@ void WriteToSldFile(int pageNum, int value, char type, const char* symbol) {
 	// 'T' = instruction Trace, empty data
 	// 'D' = EQU symbol, <data> is the symbol name ("label")
 	// 'F' = function label, <data> is the symbol name
+	// 'L' = label, <data> contains label parts
 	// 'Z' = device (memory model) changed, <data> has special custom formatting
 	//
 	// 'Z' device <data> format:
@@ -1455,8 +1655,12 @@ void WriteToSldFile(int pageNum, int value, char type, const char* symbol) {
 	assert(!sourcePosStack.empty());
 	const bool outside_source = (sourcePosStack.size() <= size_t(IncludeLevel));
 	const bool has_def_pos = !outside_source && (size_t(IncludeLevel + 1) < sourcePosStack.size());
-	const TextFilePos & curPos = outside_source ? sourcePosStack.back() : sourcePosStack.at(IncludeLevel);
-	const TextFilePos & defPos = has_def_pos ? sourcePosStack.back() : TextFilePos();
+	const TextFilePos & curPos = (sldSwapSrcPos <= 0) ?
+										(outside_source ? sourcePosStack.back() : sourcePosStack.at(IncludeLevel)) :
+										sourcePosStack.back();
+	const TextFilePos & defPos =  (sldSwapSrcPos <= 0) ?
+										(has_def_pos ? sourcePosStack.back() : TextFilePos()) :
+										((outside_source || !has_def_pos) ? TextFilePos() : sourcePosStack.at(IncludeLevel));
 
 	const char* macroFN = defPos.filename && strcmp(defPos.filename, curPos.filename) ? defPos.filename : "";
 	WriteToSldFile_TextFilePos(sldMessage_sourcePos, curPos);
@@ -1500,7 +1704,7 @@ static FILE* FP_BreakpointsFile = nullptr;
 static EBreakpointsFile breakpointsType;
 static int breakpointsCounter;
 
-void OpenBreakpointsFile(const std::filesystem::path & filename, const EBreakpointsFile type) {
+void OpenBreakpointsFile(const fs::path & filename, const EBreakpointsFile type) {
 	if (!filename.has_filename()) {
 		Error("empty filename", filename.string().c_str(), EARLY);
 		return;
@@ -1512,8 +1716,13 @@ void OpenBreakpointsFile(const std::filesystem::path & filename, const EBreakpoi
 	if (!FOPEN_ISOK(FP_BreakpointsFile, filename, "w")) {
 		Error("opening file for write", filename.string().c_str(), EARLY);
 	}
+	// not adding to --cleanonerror, this is not binary output file
 	breakpointsCounter = 0;
 	breakpointsType = type;
+
+	if (type == BPSF_FUSE) {
+		fprintf(FP_BreakpointsFile, "del\n");
+	}
 }
 
 static void CloseBreakpointsFile() {
@@ -1523,7 +1732,7 @@ static void CloseBreakpointsFile() {
 	FP_BreakpointsFile = nullptr;
 }
 
-void WriteBreakpoint(const aint val) {
+void WriteBreakpoint(const aint val, const char* ifP) {
 	if (!FP_BreakpointsFile) {
 		WarningById(W_BP_FILE);
 		return;
@@ -1532,10 +1741,18 @@ void WriteBreakpoint(const aint val) {
 	check16u(val);
 	switch (breakpointsType) {
 		case BPSF_UNREAL:
-			fprintf(FP_BreakpointsFile, "x0=0x%04X\n", val&0xFFFF);
+			if (ifP == NULL) {
+				fprintf(FP_BreakpointsFile, "x0=0x%04X\n", val&0xFFFF);
+			} else {
+			    Warning("Conditional breakpoints not (yet) supported for Unreal");
+			}
 			break;
 		case BPSF_MAME:		// technically "0x" can be omitted for MAME, but it also shouldn't hurt
-			fprintf(FP_BreakpointsFile, "bp 0x%04X\n", val&0xFFFF);
+			if (ifP == NULL) {
+				fprintf(FP_BreakpointsFile, "bp 0x%04X\n", val&0xFFFF);
+			} else {
+			    Warning("Conditional breakpoints not (yet) supported for MAME");
+			}
 			break;
 		case BPSF_ZESARUX:
 			if (1 == breakpointsCounter) fputs(" --enable-breakpoints ", FP_BreakpointsFile);
@@ -1543,9 +1760,20 @@ void WriteBreakpoint(const aint val) {
 				Warning("Maximum amount of 100 breakpoints has been already reached, this one is ignored");
 				break;
 			}
-			fprintf(FP_BreakpointsFile, "--set-breakpoint %d \"PC=%d\" ", breakpointsCounter, val&0xFFFF);
+			if (ifP == NULL) {
+				fprintf(FP_BreakpointsFile, "--set-breakpoint %d \"PC=%d\" ", breakpointsCounter, val&0xFFFF);
+			} else {
+			    Warning("Conditional breakpoints not (yet) supported for Zesarux");
+			}
+			break;
+		case BPSF_FUSE:
+			if (ifP == NULL) {
+			    fprintf(FP_BreakpointsFile, "br 0x%04X\n", val&0xFFFF);
+			} else {
+			    fprintf(FP_BreakpointsFile, "br 0x%04X if %s\n", val&0xFFFF, ifP);
+			}
 			break;
 	}
-}
 
+}
 //eof sjio.cpp
