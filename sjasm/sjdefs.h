@@ -30,8 +30,8 @@
 #define __SJDEFS
 
 // version string
-#define VERSION "1.22.0"
-#define VERSION_NUM "0x00011600"
+#define VERSION "1.23.0"
+#define VERSION_NUM "0x00011700"
 
 #define LASTPASS 3
 
@@ -109,10 +109,10 @@ struct SAlignSafeCast {
 // include all headers
 
 #include "lua_sjasm.h"
-#include "devices.h"
 #include "support.h"
 #include "relocate.h"
 #include "tables.h"
+#include "devices.h"
 #include "reader.h"
 #include "parser.h"
 #include "z80.h"
