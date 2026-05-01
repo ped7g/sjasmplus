@@ -43,9 +43,9 @@
     DB      0q77.01
     LUA ALLPASS     ; warning vs integer variant
         _pc("db " .. 2^7 .. " , " .. (1<<7))    -- "1<<7" is integer variant of "2^7"
-        _pc("db " .. 2^7.00001 .. " , " .. math.floor(2^7.00001))
+        _pc("db " .. string.format("%.6f", 2^7.00001) .. " , " .. math.floor(2^7.00001))
         _pc("db " .. 35/7 .. " , " .. 35//7)    -- "35//7" is integer variant of "35/7"
-        _pc("db " .. 36/7 .. " , " .. 36//7)    -- "36//7" is integer variant of "36/7"
+        _pc("db " .. string.format("%.6f", 36/7) .. " , " .. 36//7)    -- "36//7" is integer variant of "36/7"
     ENDLUA
     DB      12.0'0
     DB      12.0'1
