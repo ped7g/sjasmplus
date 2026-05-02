@@ -96,7 +96,12 @@ numeric_constants_invalid.asm(55): error: Digit not in base: .2
 55    0032                  DB      %101.2
 numeric_constants_invalid.asm(56): error: Digit not in base: .8
 56    0032                  DB      0q77.8
-57    0032
+57    0032                  ; code coverage: make sure the overflow in decimal part doesn't affect other warnings/reporting and is silently ignored
+numeric_constants_invalid.asm(58): warning[decimalz]: decimal part is ignored: 15.0'000'000'000'000'000'000
+58    0032 0F               DB      15.0'000'000'000'000'000'000
+numeric_constants_invalid.asm(59): warning[decimaln]: decimal part is ignored: 15.0'999'999'999'999'999'999
+59    0033 0F               DB      15.0'999'999'999'999'999'999
+60    0034
 # file closed: numeric_constants_invalid.asm
 
 Value    Label
