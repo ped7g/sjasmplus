@@ -478,7 +478,7 @@ CDeviceSlot* CDevice::GetCurrentSlot() {
 }
 
 // Calling this with (PagesCount, 0) will return total memory size
-int32_t CDevice::GetMemoryOffset(int page, int32_t offset) const {
+int32_t CDevice::GetMemoryOffset(page_t page, int32_t offset) const {
 	if (!Pages[0]) return 0;
 	return offset + page * Pages[0]->Size;
 }
