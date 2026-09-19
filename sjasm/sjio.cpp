@@ -509,9 +509,8 @@ void EmitWords(const int* words, bool isInstructionStart) {
 
 void EmitBlock(aint byte, aint len, bool preserveDeviceMemory, int emitMaxToListing) {
 	if (len <= 0) {
-		const aint adrMask = Options::IsLongPtr ? ~0 : 0xFFFF;
-		CurAddress = (CurAddress + len) & adrMask;
-		if (DISP_NONE != PseudoORG) adrdisp = (adrdisp + len) & adrMask;
+		CurAddress += len;
+		if (DISP_NONE != PseudoORG) adrdisp += len;
 		if (DeviceID)	Device->CheckPage(CDevice::CHECK_NO_EMIT);
 		else			CheckRamLimitExceeded();
 		return;
@@ -581,8 +580,8 @@ void BinIncFile(fullpath_ref_t file, aint offset, aint length) {
 			}
 			length -= advanceLength;
 			if (length <= 0 && 0 == advanceLength) Error("BinIncFile internal error", NULL, FATAL);
-			if (DISP_NONE != PseudoORG) adrdisp = adrdisp + advanceLength;
-			CurAddress = CurAddress + advanceLength;
+			CurAddress += advanceLength;
+			if (DISP_NONE != PseudoORG) adrdisp += advanceLength;
 		}
 	} else {
 		// Seek to the beginning of part to include
@@ -1094,16 +1093,15 @@ void Close() {
 	CloseBreakpointsFile();
 }
 
+// negative start means from end of RAM, zero or negative length means from end of RAM
 int SaveRAM(FILE* ff, int start, int length) {
-	//unsigned int addadr = 0,save = 0;
 	aint save = 0;
-	if (!DeviceID) return 0;		// unreachable currently
-	if (length + start > 0x10000) {
-		length = -1;
-	}
-	if (length <= 0) {
-		length = 0x10000 - start;
-	}
+	if (!DeviceID || start < -0x1'0000 || 0xFFFF < start) return 0;
+	if (start < 0) start += 0x1'0000;							// count from end of RAM
+	if (length <= 0) length += 0x1'0000 - start;				// count from end of RAM (can NOT be zero)
+	if (length <= 0) return 0;									// start was after the requested end
+	if (0x1'0000 < start + length) length = 0x1'0000 - start;	// clamp length to RAM size
+	assert(0 <= start && start < 0x1'0000 && 0 < length && start + length <= 0x1'0000);
 
 	CDeviceSlot* S;
 	for (int i=0;i<Device->SlotsCount;i++) {
@@ -1240,7 +1238,7 @@ int SaveHobeta(const fs::path & fname, const char* fhobname, aint start, aint le
 	int i;
 
 	if (length + start > 0x10000) {
-		length = -1;
+		length = 0;
 	}
 	if (length <= 0) {
 		length = 0x10000 - start;
@@ -1616,6 +1614,12 @@ void OpenSld() {
 	if (nullptr != FP_SourceLevelDebugging) return;
 	// build default filename if not explicitly provided, and default was requested
 	OpenSld_buildDefaultNameIfNeeded();
+	// check if any lines were parsed in pass 2
+	// if none, skip opening SLD file to not clutter output directory in completely invalid runs like missing source files
+	if (CompiledCurrentLine <= 0) {
+		Warning("No SLD file created because no lines assembled", Options::SourceLevelDebugFName.string().c_str());
+		return;
+	}
 	// try to open it if not opened yet
 	OpenSldImp(Options::SourceLevelDebugFName);
 }

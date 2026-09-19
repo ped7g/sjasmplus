@@ -26,6 +26,9 @@
     DB  0x0012 || 0x3400, 0 || 0x3400, 0x0012 || 0, 0 || 0
     DW  (2 * 3) + 4, 2 * (3 + 4)
     DW  $
+    ; since v1.24.0: pair, u16
+    DD  pair(-51, -2), pair(-270 + 170, -270 + 170 * 2)
+    DD  u16(0x12345678)
 
     ; shifts vs 32bit evaluator, more (tricky) tests:
     DW  0xABCD1234 << 3, 0xABCD1234 shl 3
@@ -66,29 +69,76 @@
 
     DW  @abs        ; fallback parsing of "abs" as label removed in v1.20.0 (requires @abs now)
 
+    ; since v1.24.0:
+    ; - new `pair` has truncation of arguments with warning, expected valid range is -256..+255 for each
+    ; warnings about values out of range
+    DD  pair(-257, -257)
+    DD  pair(256, 256)
+    ; errors
+    DB pair
+    DB pair $12, $34        ; this operator requires parentheses
+    DB pair($12)            ; too few
+    DB pair($12, $34, $56)  ; too many
+    ; - new `u16` has no warnings, it's brute `& $FFFF` of whatever comes in
+    DB u16
+    DB u16 0x123456         ; warn: truncation of u16-truncated value to u8 because of DB, but u16 itself is valid here
+
 ; check all operator keywords to warn about their usage as labels
 abs:
 and:
+exist:
 high:
 low:
 mod:
 norel:
 not:
 or:
+pair:
 shl:
 shr:
+sizeof:
+u16:
 @xor:   ; also global prefix "@" shouldn't matter, should still warn about it!
+; all caps now warns too (since v1.23.0)
+ABS:
+AND:
+EXIST:
+HIGH:
+LOW:
+MOD:
+NOREL:
+NOT:
+OR:
+PAIR:
+SHL:
+SHR:
+SIZEOF:
+U16:
+@XOR:
 
-; Capitalized variant is ok. It's actually ok also all-caps variant, which should NOT be ok,
-; but whoever uses label like XOR is beyond any good taste and I don't care about him.
+; Capitalized variant is ok
 Abs:
 And:
+Exist:
 High:
 Low:
 Mod:
 Norel:
 Not:
 Or:
+Pair:
 Shl:
 Shr:
+Sizeof:
+; U16 can't be capitalized, it's all-caps then
 Xor:
+
+    ; Issue #394 - `1 xor(1+1)` doesn't parse, requires whitespace ahead of parentheses
+    DB (1+2)and(2+4),   (1+2) and (2+4)
+    DB (1+2)or(2+4),    (1+2) or (2+4)
+    DB (1+2)xor(2+4),   (1+2) xor (2+4)
+    DB (2+4)shr(2-1),   (2+4) shr (2-1)
+    DB (2+4)shl(1+2),   (2+4) shl (1+2)
+    DB (2+4+8)mod(1+2), (2+4+8) mod (1+2)
+    DB low(0x12345678),high(0x12345678),not(0),abs(-0x12)
+    DW u16(0x12345678)
